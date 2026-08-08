@@ -1,0 +1,384 @@
+name: Build macOS
+
+# ============================================================
+# MODELO DE DISTRIBUCIÓN: DIRECTA Y FUERA DE TIENDAS
+# ============================================================
+# Todo el ecosistema BDJ Studio se distribuirá directamente por el desarrollador.
+# No se publicará actualmente en Microsoft Store, Mac App Store, Google Play, iOS App Store ni TestFlight.
+# Este workflow genera exclusivamente artefactos para distribución directa: GitHub Actions Artifacts y Releases.
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: frontend
+
+jobs:
+  build-macos:
+    name: Build macOS (${{ matrix.architecture }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            runner: macos-15
+          - architecture: x64
+            runner: macos-15-intel
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout bdj_license_core (dzapataba/bdjstudiolicensecore)
+        uses: actions/checkout@v4
+        with:
+          repository: dzapataba/bdjstudiolicensecore
+          path: bdj_license_core
+          token: ${{ secrets.CORE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Show environment
+        run: |
+          flutter --version
+          xcodebuild -version
+          uname -m
+
+      - name: Enable macOS desktop
+        run: flutter config --enable-macos-desktop
+
+      - name: Install Flutter dependencies
+        run: |
+          # Asegurar que el path relativo ../../bdj_license_core funcione creando enlace si es necesario
+          mkdir -p ../../bdj_license_core 2>/dev/null || true
+          cp -R ../bdj_license_core/* ../../bdj_license_core/ 2>/dev/null || cp -R "$GITHUB_WORKSPACE/bdj_license_core"/* ../../bdj_license_core/ || true
+          flutter pub get
+
+      - name: Analyze project
+        run: flutter analyze
+
+      - name: Run unit tests
+        run: flutter test
+
+      - name: Comprobar Estado del Keychain del Runner
+        run: |
+          echo "=== AUDITORÍA DE KEYCHAIN EN RUNNER ==="
+          security default-keychain -d user || true
+          security list-keychains -d user || true
+          security show-keychain-info ~/Library/Keychains/login.keychain-db 2>/dev/null || true
+          KEYCHAIN_PATH="$HOME/Library/Keychains/login.keychain-db"
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security unlock-keychain -p "" "$KEYCHAIN_PATH" 2>/dev/null || security unlock-keychain -p "runner" "$KEYCHAIN_PATH" 2>/dev/null || true
+            security set-keychain-settings -t 3600 -l "$KEYCHAIN_PATH" 2>/dev/null || true
+          fi
+
+      - name: CocoaPods Maintenance & Base Config Alignment (Sección 8)
+        run: |
+          cd macos && pod deintegrate || true && pod install && cd ..
+          flutter clean
+          flutter pub get
+
+      - name: Build macOS Smoke Test Application (CI Mode - Sección 5)
+        run: flutter build macos --release --dart-define=BDJ_KEYCHAIN_CI_SMOKE=true
+
+      - name: Validación Obligatoria de Entitlements (Smoke Build - Sección 9)
+        shell: bash
+        run: |
+          set +e
+          APP="$(find build/macos/Build/Products/Release -maxdepth 1 -type d -name '*.app' -print -quit 2>/dev/null || true)"
+          if [ -n "$APP" ]; then
+            echo "=== ENTITLEMENTS EFECTIVOS DEL BUILD SMOKE TEST: $APP ==="
+            ENTITLEMENTS_OUT=$(codesign -d --entitlements :- "$APP" 2>&1)
+            echo "$ENTITLEMENTS_OUT"
+            
+            if echo "$ENTITLEMENTS_OUT" | grep -q '\*'; then
+              echo "::warning::Atención: Se ha detectado posible uso de comodín en los entitlements de compilación."
+            fi
+            
+            if echo "$ENTITLEMENTS_OUT" | grep -i -E 'wavevideo|license'; then
+              echo "::error::Fallo de aislamiento: La aplicación Sample Pad incluye grupos de Keychain de otras aplicaciones."
+              exit 1
+            fi
+          fi
+          set -e
+
+      - name: macOS Hosted Runner — App Launch + Native Keychain Smoke Test (Secciones 1-6)
+        id: keychain_smoke_test
+        shell: bash
+        run: |
+          set +e
+          echo "=== INICIANDO SMOKE TEST DIRECTO SOBRE EL BINARIO DE MACOS ==="
+          APP="build/macos/Build/Products/Release/BDJ Studio Sample Pad.app"
+          if [ ! -d "$APP" ]; then
+            APP="$(find build/macos/Build/Products/Release -maxdepth 1 -type d -name '*.app' -print -quit 2>/dev/null || true)"
+          fi
+          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+            echo "::error::Estado: APP_SMOKE_LAUNCH_FAILED - No se encontró el bundle .app compilado para el test."
+            exit 1
+          fi
+          APP_NAME="$(basename "$APP" .app)"
+          EXEC="$APP/Contents/MacOS/$APP_NAME"
+          if [ ! -f "$EXEC" ]; then
+            echo "::error::Estado: APP_SMOKE_LAUNCH_FAILED - El binario ejecutable no existe en: $EXEC"
+            exit 1
+          fi
+
+          STDOUT_LOG="/tmp/keychain-smoke.stdout"
+          STDERR_LOG="/tmp/keychain-smoke.stderr"
+
+          echo "Aplicando limpieza y firma ad-hoc profunda al bundle (para evitar rechazo AMFI / Killed 9 en ARM64 CI)..."
+          xattr -cr "$APP" 2>/dev/null || true
+          ENT_TMP="/tmp/bundle.entitlements"
+          codesign -d --entitlements - --xml "$APP" > "$ENT_TMP" 2>/dev/null || true
+          if [ -s "$ENT_TMP" ] && grep -q "<plist" "$ENT_TMP"; then
+            codesign --force --deep --sign - --entitlements "$ENT_TMP" "$APP" 2>/dev/null || true
+          else
+            codesign --force --deep --sign - "$APP" 2>/dev/null || true
+          fi
+          rm -f "$ENT_TMP"
+          codesign -dv --verbose=4 "$APP" 2>&1 || true
+
+          echo "Ejecutando binario en modo CI Smoke ($EXEC)..."
+          "$EXEC" > "$STDOUT_LOG" 2> "$STDERR_LOG" &
+          PID=$!
+          
+          ELAPSED=0
+          TIMEOUT=60
+          TIMED_OUT=false
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            if ! kill -0 $PID 2>/dev/null; then
+              break
+            fi
+            if grep -q "KEYCHAIN_TEST_PASSED" "$STDOUT_LOG" 2>/dev/null; then
+              sleep 1
+              break
+            fi
+            sleep 1
+            ELAPSED=$((ELAPSED + 1))
+          done
+
+          if kill -0 $PID 2>/dev/null; then
+            TIMED_OUT=true
+            echo "::warning::El proceso $PID excedió el límite de ${TIMEOUT}s o no salió naturalmente. Terminando de forma controlada..."
+            echo "Enviando SIGTERM primero..."
+            kill -15 $PID 2>/dev/null || true
+            sleep 3
+            if kill -0 $PID 2>/dev/null; then
+              echo "::warning::El proceso persistió tras SIGTERM. Usando SIGKILL generado deliberadamente por CI (no clasificar como crash nativo)."
+              kill -9 $PID 2>/dev/null || true
+            fi
+            wait $PID 2>/dev/null || true
+            EXIT_CODE=124
+          else
+            wait $PID 2>/dev/null
+            EXIT_CODE=$?
+          fi
+
+          echo "--- STDOUT LOG (Captura Real Simultánea) ---"
+          cat "$STDOUT_LOG" || true
+          echo "--- STDERR LOG (Captura Real Simultánea) ---"
+          cat "$STDERR_LOG" || true
+
+          if [ "$TIMED_OUT" = false ] && [ $EXIT_CODE -eq 0 ] && grep -q "KEYCHAIN_TEST_PASSED" "$STDOUT_LOG"; then
+            echo "::notice::Estado: KEYCHAIN_TEST_PASSED - Operaciones reales de Keychain aprobadas exitosamente y binario cerrado con código 0."
+            exit 0
+          fi
+
+          echo "============================================================"
+          echo "DIFERENCIACIÓN DE ESTADOS Y DIAGNÓSTICO EN CI (SECCIÓN 11)"
+          echo "============================================================"
+
+          if [ "$TIMED_OUT" = true ] && grep -q "KEYCHAIN_SMOKE_STARTED" "$STDOUT_LOG"; then
+            echo "::error::Estado: KEYCHAIN_SMOKE_TIMEOUT - La app fue iniciada con éxito y comenzó el test, pero excedió el tiempo límite de ${TIMEOUT}s."
+          elif ! grep -q "KEYCHAIN_SMOKE_STARTED" "$STDOUT_LOG"; then
+            echo "::error::Estado: APP_SMOKE_LAUNCH_FAILED - El proceso terminó con código $EXIT_CODE sin haber impreso KEYCHAIN_SMOKE_STARTED."
+          elif grep -q "KEYCHAIN_WRITE_FAILED" "$STDOUT_LOG"; then
+            echo "::error::Estado: KEYCHAIN_WRITE_FAILED - Fallo al escribir en Keychain nativo."
+          elif grep -q "KEYCHAIN_READ_FAILED" "$STDOUT_LOG"; then
+            echo "::error::Estado: KEYCHAIN_READ_FAILED - Fallo en lectura o comparación."
+          elif grep -q "KEYCHAIN_PERSISTENCE_FAILED" "$STDOUT_LOG"; then
+            echo "::error::Estado: KEYCHAIN_PERSISTENCE_FAILED - Fallo de persistencia tras recrear instancia."
+          elif grep -q -E "KEYCHAIN_DELETE_FAILED|DELETE_INCOMPLETE" "$STDOUT_LOG"; then
+            echo "::error::Estado: KEYCHAIN_DELETE_FAILED - Fallo en borrado o confirmación de null posterior."
+          else
+            echo "::error::Estado: APP_SMOKE_LAUNCH_FAILED - Proceso cerró con código $EXIT_CODE antes de alcanzar KEYCHAIN_TEST_PASSED."
+          fi
+
+          echo "============================================================"
+          echo "LECTURA Y DIAGNÓSTICO DE INFORMES IPS REALES (SECCIÓN 7)"
+          echo "============================================================"
+          find "$HOME/Library/Logs/DiagnosticReports" -name "*.ips" -type f -mmin -30 2>/dev/null | while IFS= read -r ips; do
+            echo "Reporte IPS encontrado: $ips"
+            echo "--- Resumen Sanitizado ---"
+            grep -i -E "^\s*\"?(process|exception type|termination reason|signal|faulting thread|responsible process|timestamp)\"?\s*[:=]" "$ips" || grep -i -E "(Exception Type|Termination Reason|Process|Signal|Faulting Thread|Responsible|Date/Time):" "$ips" || head -n 25 "$ips" || true
+            if [ "$TIMED_OUT" = true ]; then
+              echo "Diagnóstico: Proceso eliminado por el script del CI (watchdog/timeout deliberado vía SIGTERM/SIGKILL), no un crash nativo."
+            elif grep -i -E "sandbox|entitlements|keychain|tcc" "$ips" >/dev/null 2>&1; then
+              echo "Diagnóstico: Fallo en sandbox / firma / entitlements / permisos."
+            else
+              echo "Diagnóstico: Crash nativo / watchdog del sistema / memory pressure / plugin."
+            fi
+            echo "--------------------------------------------------------"
+          done
+
+          exit 1
+
+      - name: Subir Crash Reports y Diagnósticos Sanitizados (Sección 7)
+        if: failure() && steps.keychain_smoke_test.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-crash-reports-samplepad-${{ matrix.architecture }}
+          path: |
+            ~/Library/Logs/DiagnosticReports/*.ips
+            /tmp/keychain-smoke.*
+          if-no-files-found: ignore
+
+      - name: Limpieza e Inspección Post-Smoke Test (Sección 10)
+        run: |
+          echo "Eliminando build especial de prueba CI..."
+          rm -rf build/macos
+          flutter clean
+          flutter pub get
+
+      - name: Compilación Release Final (Sin Modo Smoke Test - Sección 10)
+        run: flutter build macos --release
+
+      - name: Inspección de Entitlements, Secret Scan y Confirmación No-Smoke (Sección 10)
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$(find build/macos/Build/Products/Release -maxdepth 1 -type d -name '*.app' -print -quit 2>/dev/null || true)"
+          if [ -z "$APP" ]; then
+            echo "::error::Estado: APP_BUILD_FAILED - No se encontró el bundle .app compilado en Release."
+            exit 1
+          fi
+          echo "=== ENTITLEMENTS EFECTIVOS RELEASE FINAL: $APP ==="
+          ENTITLEMENTS_REL=$(codesign -d --entitlements :- "$APP" 2>&1 || true)
+          echo "$ENTITLEMENTS_REL"
+          codesign -dv --verbose=4 "$APP" 2>&1 || true
+
+          if echo "$ENTITLEMENTS_REL" | grep -q -E "ci_test|BDJ_KEYCHAIN_CI_SMOKE"; then
+            echo "::error::Estado: APP_BUILD_FAILED - Quedan reglas temporales inyectadas en la aplicación de producción."
+            exit 1
+          fi
+          if echo "$ENTITLEMENTS_REL" | grep -i -E "wavevideo|license"; then
+            echo "::error::Estado: APP_BUILD_FAILED - Fallo de aislamiento en Release: La app comparte grupos con Wave Video o License."
+            exit 1
+          fi
+
+          APP_NAME="$(basename "$APP" .app)"
+          EXEC="$APP/Contents/MacOS/$APP_NAME"
+          echo "Verificando ausencia de modo CI en el binario comercial..."
+          if strings "$EXEC" 2>/dev/null | grep -q "BDJ_KEYCHAIN_CI_SMOKE=true"; then
+            echo "::error::Estado: APP_BUILD_FAILED - El binario comercial conserva el booleano BDJ_KEYCHAIN_CI_SMOKE activo."
+            exit 1
+          fi
+          echo "✓ Confirmación: El build final comercial se ha compilado con BDJ_KEYCHAIN_CI_SMOKE inactivo."
+
+          echo "=== SECRET SCAN SOBRE BUNDLE FINAL ==="
+          if strings "$EXEC" 2>/dev/null | grep -i -E "secret_key|private_key|spp3_token|hwid_v2_secret" | grep -v -E "null|empty|^$"; then
+            echo "::error::Estado: APP_BUILD_FAILED - Fallo en Secret Scan: Se encontró posible secreto hardcodeado."
+            exit 1
+          fi
+          echo "✓ Secret scan completado exitosamente: Cero secretos expuestos."
+          echo "::notice::Estado: FINAL_RELEASE_BUILD_PASSED"
+
+      - name: Validate Architecture & Prepare Application
+        id: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find build/macos/Build/Products/Release -maxdepth 1 -type d -name '*.app' -print -quit)"
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::Estado: APP_BUILD_FAILED - No se encontró ninguna aplicación .app generada en Release"
+            exit 1
+          fi
+          APP_NAME="$(basename "$APP_PATH" .app)"
+          ARCH='${{ matrix.architecture }}'
+          LIPO_ARCH="$ARCH"
+          if [ "$ARCH" = 'x64' ]; then LIPO_ARCH='x86_64'; fi
+
+          while IFS= read -r -d '' BINARY_PATH; do
+            ARCHS="$(lipo -archs "$BINARY_PATH" 2>/dev/null || true)"
+            if [[ " $ARCHS " == *" $LIPO_ARCH "* ]] && [ "$(wc -w <<< "$ARCHS")" -gt 1 ]; then
+              THIN_PATH="${BINARY_PATH}.thin"
+              lipo "$BINARY_PATH" -thin "$LIPO_ARCH" -output "$THIN_PATH"
+              mv "$THIN_PATH" "$BINARY_PATH"
+            fi
+          done < <(find "$APP_PATH" -type f -print0)
+
+          ENT_TMP="/tmp/prep_bundle.entitlements"
+          codesign -d --entitlements - --xml "$APP_PATH" > "$ENT_TMP" 2>/dev/null || true
+          if [ -s "$ENT_TMP" ] && grep -q "<plist" "$ENT_TMP"; then
+            codesign --force --deep --sign - --entitlements "$ENT_TMP" "$APP_PATH"
+          else
+            codesign --force --deep --sign - "$APP_PATH"
+          fi
+          rm -f "$ENT_TMP"
+          codesign --verify --verbose "$APP_PATH"
+
+          EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Contents/Info.plist")"
+          EXECUTABLE_PATH="$APP_PATH/Contents/MacOS/$EXECUTABLE_NAME"
+          echo "Arquitectura final del ejecutable: $(lipo -archs "$EXECUTABLE_PATH")"
+          test "$(lipo -archs "$EXECUTABLE_PATH")" = "$LIPO_ARCH"
+
+          echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
+          echo "app_name=$APP_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Package ZIP with ditto
+        shell: bash
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            '${{ steps.app.outputs.app_path }}' \
+            '${{ steps.app.outputs.app_name }}-macOS-${{ matrix.architecture }}.zip'
+
+      - name: Verificar Integridad y Ejecutabilidad del ZIP Extraído (Sección 10)
+        shell: bash
+        run: |
+          set -euo pipefail
+          TEST_EXTRACT_DIR="/tmp/test_extract_samplepad_$(date +%s)"
+          mkdir -p "$TEST_EXTRACT_DIR"
+          ZIP_FILE='${{ steps.app.outputs.app_name }}-macOS-${{ matrix.architecture }}.zip'
+          echo "Extrayendo temporalmente $ZIP_FILE en $TEST_EXTRACT_DIR..."
+          ditto -x -k "$ZIP_FILE" "$TEST_EXTRACT_DIR"
+          EXTRACTED_APP="$TEST_EXTRACT_DIR/${{ steps.app.outputs.app_name }}.app"
+          if [ ! -d "$EXTRACTED_APP" ]; then
+            echo "::error::Estado: APP_BUILD_FAILED - La estructura .app no se conservó intacta tras la extracción."
+            exit 1
+          fi
+          EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$EXTRACTED_APP/Contents/Info.plist")"
+          EXECUTABLE_PATH="$EXTRACTED_APP/Contents/MacOS/$EXECUTABLE_NAME"
+          if [ ! -f "$EXECUTABLE_PATH" ] || [ ! -x "$EXECUTABLE_PATH" ]; then
+            echo "::error::Estado: APP_BUILD_FAILED - El binario principal ($EXECUTABLE_PATH) no existe o carece de permisos tras extraer."
+            exit 1
+          fi
+          echo "✓ Validación de extracción superada: Estructura .app y atributos ejecutables intactos."
+          rm -rf "$TEST_EXTRACT_DIR"
+
+      - name: Generate SHA-256 Checksum
+        shell: bash
+        run: |
+          shasum -a 256 *.zip > checksums-macOS-${{ matrix.architecture }}.sha256
+          cat checksums-macOS-${{ matrix.architecture }}.sha256
+
+      - name: Upload macOS ZIP & SHA-256 to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: BDJ-Studio-Sample-Pad-macOS-${{ matrix.architecture }}
+          path: |
+            frontend/*.zip
+            frontend/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+

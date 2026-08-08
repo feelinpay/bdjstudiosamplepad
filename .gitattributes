@@ -1,0 +1,8 @@
+* text=auto eol=lf
+*.exe binary
+*.apk binary
+*.dmg binary
+*.zip binary
+*.so binary
+*.dylib binary
+*.dll binary

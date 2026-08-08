@@ -1,0 +1,40 @@
+# Compiled binaries (distribuir via GitHub Releases o directo, no en el repo)
+distribution/*.exe
+distribution/*.apk
+distribution/*.dmg
+distribution/*.zip
+*.exe
+*.apk
+*.dmg
+*.zip
+*.a
+*.dylib
+*.so
+
+# Excluir de ignore las bibliotecas nativas de third_party
+!**/third_party/**/*.a
+!**/third_party/**/*.dylib
+!**/third_party/**/*.so
+!**/third_party/**/*.dll
+
+# Flutter & Dart build artifacts
+**/build/
+**/.dart_tool/
+**/.pub-cache/
+**/.pub/
+**/.metadata
+**/coverage/
+
+# Sonar scanner (transitorio)
+**/.scannerwork/
+**/*.sonar_lock
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+
+# Agent tooling / skill caches
+.claude/
+.agents/

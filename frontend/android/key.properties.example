@@ -1,0 +1,4 @@
+storePassword=REPLACE_WITH_SECURE_PASSWORD
+keyPassword=REPLACE_WITH_SECURE_PASSWORD
+keyAlias=bdj-sample-pad
+storeFile=C:/secure/bdj-sample-pad-upload.jks
