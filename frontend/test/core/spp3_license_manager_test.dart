@@ -201,7 +201,7 @@ void main() {
       final result = await licenseManager.activateLicense(token);
       expect(result.isLeft(), isTrue);
       result.fold(
-        (l) => expect(l.message, contains('producto')),
+        (l) => expect(l.message, isNot(contains('producto')), reason: 'Por seguridad fail-closed no debe revelar que el token pertenece a otro producto.'),
         (r) => fail('No debe aceptar otro producto'),
       );
     });
