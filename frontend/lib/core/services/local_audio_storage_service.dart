@@ -8,6 +8,32 @@ import 'app_storage_service.dart';
 class LocalAudioStorageService {
   static const String prefix = 'app_local://';
 
+  /// Directorios internos administrados por la app dentro de Assets/Audio.
+  /// No son workspaces: nunca deben registrarse como tales ni sus archivos
+  /// borrarse por la limpieza automática de huérfanos.
+  static const List<String> internalMediaDirNames = [
+    'folder_imports',
+    'workspace_imports',
+  ];
+
+  /// Verdadero si [name] es un directorio interno administrado por la app
+  /// (o un directorio oculto/vacío). `restored_*` agrupa restauraciones de
+  /// backups y se reconoce por prefijo.
+  static bool isInternalMediaDirName(String name) {
+    final n = name.trim().toLowerCase();
+    if (n.isEmpty || n.startsWith('.')) return true;
+    if (internalMediaDirNames.contains(n)) return true;
+    return n.startsWith('restored_');
+  }
+
+  /// Verdadero si [relativePath] (relativa a Assets/Audio) cae dentro de un
+  /// directorio interno administrado por la app.
+  static bool isInternalMediaDirPath(String relativePath) {
+    final normalized = relativePath.replaceAll('\\', '/');
+    if (normalized.isEmpty) return true;
+    return isInternalMediaDirName(normalized.split('/').first);
+  }
+
   /// Única lista oficial de extensiones de audio soportadas.
   /// Las extensiones se comparan en minúsculas para ser case-insensitive.
   /// Incluye formatos de uso común en producción y DJing.
@@ -37,6 +63,11 @@ class LocalAudioStorageService {
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
   }
+
+  /// Versión pública de [_sanitizeSegment] para que otros servicios (p.ej. el
+  /// importador/exportador de carpetas) saniticen nombres con las MISMAS
+  /// reglas que el almacenamiento: espacios preservados, sin guiones bajos.
+  static String sanitizeSegment(String value) => _sanitizeSegment(value);
 
   /// Separador canónico de las rutas relativas guardadas en `samplePath`.
   ///
@@ -325,6 +356,9 @@ class LocalAudioStorageService {
           final relativePath = p
               .relative(entity.path, from: audiosDir.path)
               .replaceAll('\\', '/');
+          // Los directorios internos (folder_imports/, restored_*, etc.) nunca
+          // se barren: contienen imports y restauraciones del usuario.
+          if (isInternalMediaDirPath(relativePath)) continue;
           if (!activeFileNames.contains(relativePath)) {
             await entity.delete();
             deletedCount++;

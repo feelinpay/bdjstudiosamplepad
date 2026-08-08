@@ -15,6 +15,7 @@ import 'package:bdj_studio_sample_pad/features/sample_library/data/models/sample
 import 'package:bdj_studio_sample_pad/features/sample_library/data/models/genre_model.dart';
 import 'package:bdj_studio_sample_pad/features/sample_library/data/models/folder_model.dart';
 import 'package:bdj_studio_sample_pad/features/workspace/domain/services/workspace_importer.dart';
+import 'package:bdj_studio_sample_pad/core/services/app_storage_service.dart';
 
 /// Localiza la librería nativa de Isar empaquetada por `isar_flutter_libs`
 /// (dependencia de ruta local) para cargarla en `flutter test`.
@@ -156,10 +157,8 @@ void main() {
       reason: 'SubCarpeta debe tener su audio',
     );
 
-    // Los archivos deben existir en disco dentro de media.
-    final mediaDir = Directory(
-      p.join(tempRoot.path, 'BDJ Studio Sample Pad', 'Assets', 'Audio'),
-    );
+    // Los archivos deben existir en disco dentro de Assets/Audio.
+    final mediaDir = await AppStorageService.mediaDirectory();
     expect(
       File(
         p.join(mediaDir.path, ws.name, 'Carpeta1', 'audio_uno.mp3'),

@@ -42,6 +42,9 @@ class FilesystemSyncService {
         if (entity is Directory) {
           final dirName = p.basename(entity.path).trim();
           if (dirName.isEmpty || dirName.startsWith('.')) continue;
+          if (LocalAudioStorageService.isInternalMediaDirName(dirName)) {
+            continue;
+          }
 
           WorkspaceModel? workspace = wsMap[dirName.toLowerCase()];
           if (workspace == null) {
@@ -67,13 +70,22 @@ class FilesystemSyncService {
             wsMap[dirName.toLowerCase()] = workspace;
           }
 
-          newItemsCount += await _syncFolderRecursive(
-            isar,
-            workspace,
-            entity,
-            0,
-            {entity.path},
-          );
+          try {
+            newItemsCount += await _syncFolderRecursive(
+              isar,
+              workspace,
+              entity,
+              0,
+              {entity.path},
+            );
+          } catch (e) {
+            // Un workspace no debe abortar toda la reconciliación: su carpeta
+            // puede estar temporalmente inaccesible (disco extraíble, sync de
+            // nube en pausa). Se registra el error y se continúa con el resto.
+            debugPrint(
+              'FilesystemSync: no se pudo sincronizar "$dirName": $e',
+            );
+          }
         }
       }
 
@@ -87,6 +99,9 @@ class FilesystemSyncService {
       final diskDirNames = topLevelEntities
           .whereType<Directory>()
           .map((d) => p.basename(d.path).trim().toLowerCase())
+          .where(
+            (name) => !LocalAudioStorageService.isInternalMediaDirName(name),
+          )
           .toSet();
 
       for (final ws in workspaces) {
@@ -116,8 +131,10 @@ class FilesystemSyncService {
         newItemsCount++;
       }
 
-      // Limpieza automática de vínculos huérfanos sin alterar ni eliminar pads
-      await LocalAudioStorageService.autoCleanOrphans(isar);
+      // Nota: la limpieza de archivos huérfanos NO se ejecuta aquí. La
+      // reconciliación solo registra/elimina entradas de la BD; borrar archivos
+      // de audio en un escaneo automático podía eliminar contenido importado
+      // (folder_imports/) o de workspaces cuyo disco estaba temporalmente ausente.
 
       return newItemsCount;
     } catch (e) {
@@ -143,6 +160,53 @@ class FilesystemSyncService {
             pad.samplePath != null &&
             pad.samplePath!.isNotEmpty) {
           return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /// Verifica si el contenido de un pad-carpeta todavía existe en disco
+  /// (audios o subcarpetas con audio). Se usa para no borrar carpetas
+  /// importadas cuya data física vive en `folder_imports/` y no dentro de la
+  /// carpeta física del workspace.
+  static Future<bool> _folderContentExists(
+    Isar isar,
+    int workspaceId,
+    PadModel folderPad,
+  ) async {
+    if (folderPad.targetPageIndex == null) return false;
+
+    final rootPage = await isar.pageModels
+        .filter()
+        .workspace((w) => w.idEqualTo(workspaceId))
+        .pageIndexEqualTo(folderPad.targetPageIndex!)
+        .findFirst();
+    if (rootPage == null) return false;
+
+    final pagesToVisit = <PageModel>[rootPage];
+    final visited = <int>{};
+    while (pagesToVisit.isNotEmpty) {
+      final page = pagesToVisit.removeLast();
+      if (!visited.add(page.id)) continue;
+      await page.pads.load();
+      for (final pad in page.pads.toList()) {
+        if (pad.padTypeIndex == 0 && pad.samplePath != null) {
+          try {
+            final resolved = await LocalAudioStorageService.resolvePath(
+              pad.samplePath!,
+            );
+            if (await File(resolved).exists()) return true;
+          } catch (_) {
+            // No se puede resolver la ruta: no lo tratamos como contenido vivo.
+          }
+        } else if (pad.padTypeIndex == 1 && pad.targetPageIndex != null) {
+          final childPage = await isar.pageModels
+              .filter()
+              .workspace((w) => w.idEqualTo(workspaceId))
+              .pageIndexEqualTo(pad.targetPageIndex!)
+              .findFirst();
+          if (childPage != null) pagesToVisit.add(childPage);
         }
       }
     }
@@ -329,8 +393,17 @@ class FilesystemSyncService {
 
     for (final pad in currentPads) {
       if (pad.padTypeIndex == 1) {
-        // Pad de tipo carpeta: verificar si la carpeta aún existe en disco
+        // Pad de tipo carpeta: solo se elimina si el usuario lo borró de verdad
+        // desde el explorador. Las carpetas importadas pueden no tener
+        // subcarpeta física en el workspace (su audio vive en folder_imports/),
+        // así que se verifica además que su contenido ya no exista en disco.
         if (!diskChildDirs.contains(pad.label.trim().toLowerCase())) {
+          final stillHasContent = await _folderContentExists(
+            isar,
+            workspace.id,
+            pad,
+          );
+          if (stillHasContent) continue;
           // La carpeta fue eliminada externamente → limpiar el pad y su página oculta
           await isar.writeTxn(() async {
             if (pad.targetPageIndex != null) {
@@ -428,6 +501,15 @@ class FilesystemSyncService {
             name.endsWith('.tmp') ||
             name.endsWith('.dat')) {
           return;
+        }
+        // Ignorar eventos dentro de directorios internos (folder_imports/,
+        // workspace_imports/, restauraciones): su contenido no se reconcilia,
+        // así que no deben disparar escaneos ni tocar la base de datos.
+        if (p.isWithin(mediaDir.path, event.path)) {
+          final rel = p
+              .relative(event.path, from: mediaDir.path)
+              .replaceAll('\\', '/');
+          if (LocalAudioStorageService.isInternalMediaDirPath(rel)) return;
         }
 
         _debounceTimer?.cancel();

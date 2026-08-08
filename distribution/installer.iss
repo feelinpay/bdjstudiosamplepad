@@ -18,3 +18,10 @@ Name: "{autodesktop}\BDJ Studio Sample Pad"; Filename: "{app}\sample_pad_pro.exe
 
 [Tasks]
 Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; GroupDescription: "Iconos adicionales:"
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{userappdata}\BDJ Studio\BDJ Studio Sample Pad"
+Type: filesandordirs; Name: "{userappdata}\BDJ Studio Sample Pad"
+Type: filesandordirs; Name: "{userappdata}\com.bdjstudio\BDJ Studio Sample Pad"
+Type: filesandordirs; Name: "{userappdata}\com.bdjstudio\bdj_studio_sample_pad"
+Type: filesandordirs; Name: "{userappdata}\com.bdjstudio\frontend"

@@ -299,7 +299,7 @@ class ConfigBackupService {
         ).writeAsString(jsonEncode(pathMap), flush: true);
         await _restorePreferences(preferencesFile);
       } else {
-        await _mergeDatabase(databaseFile, importName, pathMap);
+        await mergeDatabase(databaseFile, importName, pathMap);
       }
       await preferencesFile.delete();
       if (assets.isEmpty &&
@@ -416,7 +416,8 @@ class ConfigBackupService {
   /// Agrega el contenido de otra base sin borrar la configuracion actual.
   /// La escritura en la base actual es una sola transaccion: si algo falla,
   /// no queda una importacion parcial.
-  static Future<void> _mergeDatabase(
+  @visibleForTesting
+  static Future<void> mergeDatabase(
     File importedDatabase,
     String importName,
     Map<String, String> pathMap,
@@ -598,6 +599,18 @@ class ConfigBackupService {
           await current.pageModels.put(target);
           await target.workspace.save();
           pageMap[source.id] = target;
+        }
+        // Segundo pase: los ids de pagina cambian al importar, por lo que
+        // parentPageId debe remapearse (id fuente -> id nuevo) o el arbol de
+        // carpetas del workspace restaurado pierde sus paginas internas.
+        for (final source in incomingPages) {
+          if (source.parentPageId == null) continue;
+          final target = pageMap[source.id];
+          if (target == null) continue;
+          final newParent = pageMap[source.parentPageId];
+          if (newParent == null) continue;
+          target.parentPageId = newParent.id;
+          await current.pageModels.put(target);
         }
 
         final padIdMap = <int, int>{};

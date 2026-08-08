@@ -314,9 +314,10 @@ class FolderTransferService {
   }
 
   static String _sanitizeNamespace(String value) {
-    return value
-        .replaceAll(RegExp(r'[^\w\-]+'), '_')
-        .replaceAll(RegExp(r'_+'), '_');
+    // Mismas reglas que el almacenamiento de audios: preserva los espacios
+    // naturales (antes usaba guiones bajos, lo que hacía que el import no
+    // coincidiera con la carpeta física del pad-carpeta).
+    return LocalAudioStorageService.sanitizeSegment(value);
   }
 
   static ImportedPad _deserializePad(

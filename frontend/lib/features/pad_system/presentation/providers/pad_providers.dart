@@ -765,6 +765,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
             ..pageIndex = newTarget
             ..columns = sourceChildPage.columns
             ..rows = sourceChildPage.rows
+            ..parentPageId = page.id
             ..workspace.value = workspace;
           await isar.pageModels.put(newHiddenPage);
           await newHiddenPage.workspace.save();
@@ -859,6 +860,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
         ..pageIndex = hiddenIndex
         ..columns = page.columns
         ..rows = page.rows
+        ..parentPageId = page.id
         ..workspace.value = workspace;
       await isar.pageModels.put(hidden);
       await hidden.workspace.save();
@@ -985,6 +987,10 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       await folderPad.page.save();
       addedModels.add(folderPad);
     });
+    // Contraparte física del folder pad: crear la subcarpeta real dentro del
+    // workspace para que la reconciliación la reconozca (el audio importado
+    // vive en folder_imports/, pero la estructura en disco debe existir).
+    await LocalAudioStorageService.ensureSubfolderDir(workspace.name, [data.name]);
     // Localized update: append the new folder pad only.
     final current = state.value ?? [];
     state = AsyncData([...current, for (final m in addedModels) _mapToEntity(m)]);
@@ -1001,6 +1007,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       ..pageIndex = hiddenIndex
       ..columns = parentPage.columns
       ..rows = parentPage.rows
+      ..parentPageId = parentPage.id
       ..workspace.value = workspace;
     await isar.pageModels.put(hidden);
     await hidden.workspace.save();
@@ -1222,6 +1229,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       ..pageIndex = nextHiddenIndex
       ..columns = page.columns
       ..rows = page.rows
+      ..parentPageId = page.id
       ..workspace.value = workspace;
     await isar.pageModels.put(hiddenPage);
     await hiddenPage.workspace.save();
@@ -1282,6 +1290,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       ..pageIndex = nextHiddenIndex
       ..columns = parentPage.columns
       ..rows = parentPage.rows
+      ..parentPageId = parentPage.id
       ..workspace.value = workspace;
     await isar.pageModels.put(hiddenPage);
     await hiddenPage.workspace.save();

@@ -95,7 +95,7 @@ BEGIN
             VALUE "InternalName", "bdj_studio_sample_pad" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 BDJ Studio. All rights reserved." "\0"
             VALUE "OriginalFilename", "bdj_studio_sample_pad.exe" "\0"
-            VALUE "ProductName", "bdj_studio_sample_pad" "\0"
+            VALUE "ProductName", "BDJ Studio Sample Pad" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

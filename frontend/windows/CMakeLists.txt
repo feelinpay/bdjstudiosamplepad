@@ -47,6 +47,14 @@ add_subdirectory("runner")
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# MSVC emite C4047/C4022 al compilar el plugin nativo `jni` (dartjni.c/h):
+# pasa JNIEnv** donde el estándar JNI pide void**. Ambas representaciones son
+# idénticas en memoria, es un detalle del plugin tercero e inofensivo, pero
+# ensucia el build en Windows. Se suprimen solo para ese target.
+if(TARGET jni)
+  target_compile_options(jni PRIVATE /wd4047 /wd4022)
+endif()
+
 # === Installation ===
 set(BUILD_BUNDLE_DIR "$<TARGET_FILE_DIR:${BINARY_NAME}>")
 set(CMAKE_VS_INCLUDE_INSTALL_TO_DEFAULT_BUILD 1)

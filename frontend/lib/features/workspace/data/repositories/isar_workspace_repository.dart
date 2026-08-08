@@ -1,8 +1,11 @@
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:isar/isar.dart';
 import '../../domain/repositories/workspace_repository.dart';
 import '../models/workspace_model.dart';
 import '../models/page_model.dart';
 import '../../../pad_system/data/models/pad_model.dart';
+import '../../../macros/data/models/macro_model.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 
 class IsarWorkspaceRepository implements WorkspaceRepository {
@@ -22,6 +25,20 @@ class IsarWorkspaceRepository implements WorkspaceRepository {
     await page.pads.load();
     await isar.padModels.deleteAll(page.pads.map((p) => p.id).toList());
     await isar.pageModels.delete(page.id);
+  }
+
+  /// Evita borrar un audio si otro pad que permanece en la base lo comparte.
+  Future<List<String>> _unsharedAudioPaths(
+    Isar isar,
+    Iterable<String> candidates,
+    Set<int> deletingPadIds,
+  ) async {
+    final pathsInUse = (await isar.padModels.where().findAll())
+        .where((pad) => !deletingPadIds.contains(pad.id))
+        .map((pad) => pad.samplePath)
+        .whereType<String>()
+        .toSet();
+    return candidates.where((path) => !pathsInUse.contains(path)).toList();
   }
 
   @override
@@ -223,11 +240,35 @@ class IsarWorkspaceRepository implements WorkspaceRepository {
     // Defense-in-depth: la UI ya detiene el audio y borra archivos, pero el
     // repo también limpia el directorio físico y los huérfanos por si se
     // invoca directamente (p.ej. tests, restauraciones de backup).
-    if (samplePaths.isNotEmpty) {
-      await LocalAudioStorageService.deleteAudioFiles(samplePaths);
+    // Solo se borran los audios que NINGÚN pad que permanece en la base siga
+    // usando: un archivo compartido (importado o copiado por duplicateWorkspace)
+    // no debe desaparecer solo porque un workspace se elimine.
+    final unsharedPaths = await _unsharedAudioPaths(
+      isar,
+      samplePaths,
+      padIds.map(int.parse).toSet(),
+    );
+    if (unsharedPaths.isNotEmpty) {
+      await LocalAudioStorageService.deleteAudioFiles(unsharedPaths);
     }
     if (wsName != null) {
-      await LocalAudioStorageService.deleteWorkspaceDir(wsName);
+      final wsSegment = LocalAudioStorageService.sanitizeSegment(wsName);
+      final stillReferenced = await isar.padModels
+          .filter()
+          .samplePathStartsWith(
+            '${LocalAudioStorageService.prefix}$wsSegment/',
+          )
+          .count();
+      if (stillReferenced > 0) {
+        // Un workspace duplicado u otro pad sigue usando audios dentro de esta
+        // carpeta: conservarla en disco para no dejar a la copia sin sonido.
+        debugPrint(
+          'WorkspaceRepository: se conserva la carpeta física de "$wsName" '
+          'porque $stillReferenced pads aún la referencian.',
+        );
+      } else {
+        await LocalAudioStorageService.deleteWorkspaceDir(wsName);
+      }
     }
     await LocalAudioStorageService.autoCleanOrphans(isar);
 
@@ -323,6 +364,45 @@ class IsarWorkspaceRepository implements WorkspaceRepository {
     });
   }
 
+  /// Remapea las referencias a paginas (pageIndex/targetPageIndex) guardadas
+  /// en el actionsJson de una macro cuando el indice de una pagina fue
+  /// renumerado por la reconciliacion. Respeta el ambito del workspace: una
+  /// accion con workspaceId explicito de OTRO workspace no se toca.
+  static String _remapMacroPageIndexes(
+    String source,
+    Map<int, int> pageIndexMap,
+    int workspaceId,
+  ) {
+    try {
+      final actions = jsonDecode(source) as List<dynamic>;
+      var changed = false;
+      for (final raw in actions) {
+        final action = raw as Map<String, dynamic>;
+        final params = action['params'] as Map<String, dynamic>?;
+        if (params == null) continue;
+        final wsRaw = params['targetWorkspaceId'] ?? params['workspaceId'];
+        final wsRef = wsRaw is num
+            ? wsRaw.toInt()
+            : int.tryParse(wsRaw?.toString() ?? '');
+        if (wsRef != null && wsRef != workspaceId) continue;
+        for (final key in const ['targetPageIndex', 'pageIndex']) {
+          final rawVal = params[key];
+          final val = rawVal is num
+              ? rawVal.toInt()
+              : int.tryParse(rawVal?.toString() ?? '');
+          if (val == null) continue;
+          final mapped = pageIndexMap[val];
+          if (mapped == null || mapped == val) continue;
+          params[key] = mapped;
+          changed = true;
+        }
+      }
+      return changed ? jsonEncode(actions) : source;
+    } catch (_) {
+      return source;
+    }
+  }
+
   @override
   Future<void> reconcilePageIndexIntegrity(int workspaceId) async {
     final isar = await dbFuture;
@@ -341,34 +421,73 @@ class IsarWorkspaceRepository implements WorkspaceRepository {
     final folders = [for (final p in pages) if (p.parentPageId != null) p]
       ..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
 
+    // Mapeo pageIndex viejo -> nuevo: se usa para remapear targetPageIndex de
+    // los pads-carpeta cuando una pagina es renumerada por la reconciliacion.
+    final pageIndexMap = <int, int>{};
     final used = <int>{};
     int cursorRoot = 0;
     for (final p in roots) {
-      var idx = p.pageIndex;
+      final oldIdx = p.pageIndex;
+      var idx = oldIdx;
       if (idx >= 1000 || used.contains(idx)) idx = cursorRoot;
       while (used.contains(idx)) {
         idx++;
       }
       used.add(idx);
       cursorRoot = idx + 1;
+      if (oldIdx != idx) pageIndexMap[oldIdx] = idx;
       p.pageIndex = idx;
     }
 
     int cursorFolder = 1000;
     for (final p in folders) {
-      var idx = p.pageIndex;
+      final oldIdx = p.pageIndex;
+      var idx = oldIdx;
       if (idx < 1000 || used.contains(idx)) idx = cursorFolder;
       while (used.contains(idx)) {
         idx++;
       }
       used.add(idx);
       cursorFolder = idx + 1;
+      if (oldIdx != idx) pageIndexMap[oldIdx] = idx;
       p.pageIndex = idx;
     }
 
     await isar.writeTxn(() async {
       for (final p in pages) {
         await isar.pageModels.put(p);
+      }
+      // Remapear los pads-carpeta cuyo targetPageIndex apuntaba a una pagina
+      // que fue renumerada; de lo contrario los links de carpetas quedan rotos.
+      if (pageIndexMap.isNotEmpty) {
+        final pads = <PadModel>[];
+        for (final p in pages) {
+          await p.pads.load();
+          pads.addAll(p.pads);
+        }
+        for (final pad in pads) {
+          final oldTarget = pad.targetPageIndex;
+          if (pad.padTypeIndex != 1 || oldTarget == null) continue;
+          final newTarget = pageIndexMap[oldTarget];
+          if (newTarget == null || newTarget == oldTarget) continue;
+          pad.targetPageIndex = newTarget;
+          await isar.padModels.put(pad);
+        }
+        // Remapear tambien las referencias de pagina guardadas en las macros
+        // (navegacion a carpeta, triggerPad a destino) para que no apunten a
+        // indices que dejaron de existir tras la renumeracion.
+        final macros = await isar.macroModels.where().findAll();
+        for (final macro in macros) {
+          final remapped = _remapMacroPageIndexes(
+            macro.actionsJson,
+            pageIndexMap,
+            workspaceId,
+          );
+          if (remapped != macro.actionsJson) {
+            macro.actionsJson = remapped;
+            await isar.macroModels.put(macro);
+          }
+        }
       }
     });
   }

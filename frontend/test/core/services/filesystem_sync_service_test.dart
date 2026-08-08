@@ -92,11 +92,10 @@ void main() {
     } catch (_) {}
   });
 
-  /// En la plataforma de test (Windows) AppStorageService._rootPath sube un
-  /// nivel del support dir y usa el nombre de la app, de modo que:
+  /// En la plataforma de test la raíz de datos es el support dir de path_provider:
   ///   support  → tempRoot/support
-  ///   root     → tempRoot/BDJ Studio Sample Pad
-  ///   mediaDir → tempRoot/BDJ Studio Sample Pad/Assets/Audio
+  ///   root     → tempRoot/support
+  ///   mediaDir → tempRoot/support/Assets/Audio
   Future<Directory> _expectedMediaDir() async {
     return await AppStorageService.mediaDirectory();
   }
@@ -266,4 +265,157 @@ void main() {
         await LocalAudioStorageService.resolvePath(savedPad.samplePath!);
     expect(File(resolved).existsSync(), isTrue);
   });
+
+  test(
+    'reconcileOnStartup ignora directorios internos (folder_imports) sin crear workspace fantasma',
+    () async {
+      final mediaDir = await _expectedMediaDir();
+      final internalDir = Directory(p.join(mediaDir.path, 'folder_imports'));
+      final imported = Directory(p.join(internalDir.path, 'Mi Set'));
+      await imported.create(recursive: true);
+      File(p.join(imported.path, 'kick.wav')).writeAsBytesSync([1, 2, 3]);
+
+      final isar = await _openIsar(tempRoot);
+      addTearDown(() => isar.close());
+
+      final count = await FilesystemSyncService.reconcileOnStartup(isar);
+
+      final workspaces = await isar.workspaceModels.where().findAll();
+      expect(workspaces, isEmpty,
+          reason: 'folder_imports no debe registrar workspaces fantasma');
+      expect(count, 0);
+    },
+  );
+
+  test(
+    'reconcileOnStartup conserva folder pads importados cuyo audio vive en folder_imports',
+    () async {
+      final mediaDir = await _expectedMediaDir();
+
+      // Workspace real con su carpeta física vacía.
+      final wsDir = Directory(p.join(mediaDir.path, 'Set A'));
+      await wsDir.create(recursive: true);
+
+      // El audio importado vive en folder_imports/Mi Set/kick.wav.
+      final importedDir = Directory(
+        p.join(mediaDir.path, 'folder_imports', 'Mi Set'),
+      );
+      await importedDir.create(recursive: true);
+      File(p.join(importedDir.path, 'kick.wav')).writeAsBytesSync([1, 2, 3]);
+
+      final isar = await _openIsar(tempRoot);
+      addTearDown(() => isar.close());
+
+      // Sembrar workspace + folder pad + página oculta + audio.
+      final ws = WorkspaceModel()
+        ..name = 'Set A'
+        ..createdAt = DateTime.now();
+      final rootPage = PageModel()
+        ..pageIndex = 0
+        ..workspace.value = ws;
+      final hiddenPage = PageModel()
+        ..pageIndex = 1000
+        ..workspace.value = ws;
+      final folderPad = PadModel()
+        ..padId = 0
+        ..label = 'Mi Set'
+        ..colorHex = 0xFF7C4DFF
+        ..padTypeIndex = 1
+        ..targetPageIndex = 1000
+        ..page.value = rootPage;
+      final audioPad = PadModel()
+        ..padId = 1
+        ..label = 'Kick'
+        ..colorHex = 0xFF000000
+        ..padTypeIndex = 0
+        ..samplePath = 'app_local://folder_imports/Mi Set/kick.wav'
+        ..page.value = hiddenPage;
+
+      await isar.writeTxn(() async {
+        await isar.workspaceModels.put(ws);
+        await isar.pageModels.put(rootPage);
+        await isar.pageModels.put(hiddenPage);
+        await rootPage.workspace.save();
+        await hiddenPage.workspace.save();
+        await isar.padModels.put(folderPad);
+        await isar.padModels.put(audioPad);
+        await folderPad.page.save();
+        await audioPad.page.save();
+      });
+
+      await FilesystemSyncService.reconcileOnStartup(isar);
+
+      final savedFolderPads = await isar.padModels
+          .filter()
+          .padTypeIndexEqualTo(1)
+          .findAll();
+      expect(
+        savedFolderPads.map((p) => p.label),
+        contains('Mi Set'),
+        reason: 'un folder pad importado no debe borrarse por falta de subcarpeta física',
+      );
+
+      final savedAudioPads = await isar.padModels
+          .filter()
+          .padTypeIndexEqualTo(0)
+          .findAll();
+      expect(savedAudioPads.length, 1);
+      expect(File(p.join(importedDir.path, 'kick.wav')).existsSync(), isTrue,
+          reason: 'la reconciliación no debe borrar el audio importado');
+    },
+  );
+
+  test('cleanUnusedAudioFiles nunca borra archivos de directorios internos',
+      () async {
+    final mediaDir = await _expectedMediaDir();
+
+    final internalDir = Directory(p.join(mediaDir.path, 'folder_imports'));
+    await internalDir.create(recursive: true);
+    File(p.join(internalDir.path, 'stray.wav')).writeAsBytesSync([1]);
+
+    final regularDir = Directory(p.join(mediaDir.path, 'Set A'));
+    await regularDir.create(recursive: true);
+    File(p.join(regularDir.path, 'old.wav')).writeAsBytesSync([2]);
+
+    // Barrido con cero paths activos: solo lo NO interno se limpia.
+    await LocalAudioStorageService.cleanUnusedAudioFiles(const []);
+
+    expect(File(p.join(internalDir.path, 'stray.wav')).existsSync(), isTrue,
+        reason: 'folder_imports no debe barrerse');
+    expect(File(p.join(regularDir.path, 'old.wav')).existsSync(), isFalse,
+        reason: 'un archivo huérfano normal sí se limpia');
+  });
+
+  test(
+    'reconcileOnStartup no aborta si una carpeta de workspace falla al listarse',
+    () async {
+      // Solo Windows: se usa un junction colgante para simular una subcarpeta
+      // inaccesible cuyo listSync() lanza una excepción a mitad del escaneo.
+      if (!Platform.isWindows) return;
+      final mediaDir = await _expectedMediaDir();
+
+      // Workspace sano que SÍ debe reconciliarse.
+      final goodDir = Directory(p.join(mediaDir.path, 'Good Set'));
+      await goodDir.create(recursive: true);
+      File(p.join(goodDir.path, 'kick.wav')).writeAsBytesSync([1]);
+
+      // Workspace con una subcarpeta inaccesible (junction roto).
+      final brokenDir = Directory(p.join(mediaDir.path, 'Broken Set'));
+      await brokenDir.create(recursive: true);
+      final link = p.join(brokenDir.path, 'BrokenSub');
+      final target = p.join(brokenDir.path, 'no_existe_target');
+      final result = await Process.run('cmd', ['/c', 'mklink', '/J', link, target]);
+      if (result.exitCode != 0) return; // no se pudo crear → omitir
+
+      final isar = await _openIsar(tempRoot);
+      addTearDown(() => isar.close());
+
+      // No debe lanzar excepción y debe registrar al menos el workspace sano.
+      final count = await FilesystemSyncService.reconcileOnStartup(isar);
+
+      final workspaces = await isar.workspaceModels.where().findAll();
+      expect(workspaces.map((w) => w.name), contains('Good Set'));
+      expect(count, greaterThan(0));
+    },
+  );
 }
