@@ -10,7 +10,9 @@ final secureStorageProvider = Provider<SecureStorageImpl>((ref) {
 });
 
 final deviceFingerprintProvider = Provider<DeviceFingerprint>((ref) {
-  return DeviceFingerprint();
+  return DeviceFingerprint.withPersistentStorage(
+    ref.read(secureStorageProvider),
+  );
 });
 
 final licenseManagerProvider = Provider<LicenseManager>((ref) {

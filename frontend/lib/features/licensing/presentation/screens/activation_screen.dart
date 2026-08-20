@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import '../providers/license_providers.dart';
 import '../../../../core/licensing/licensing_port.dart';
 
@@ -17,7 +16,6 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
   final _focusNode = FocusNode();
   bool _isLoading = false;
   String _hardwareCode = 'Cargando...';
-  String _appVersion = 'Cargando...';
 
   @override
   void initState() {
@@ -29,11 +27,9 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
     final fingerprint = await ref
         .read(licenseManagerProvider)
         .getHardwareFingerprint();
-    final packageInfo = await PackageInfo.fromPlatform();
     if (mounted) {
       setState(() {
         _hardwareCode = fingerprint;
-        _appVersion = packageInfo.version;
       });
     }
   }
@@ -144,7 +140,7 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // HWID CARD
+                    // ID DEL DISPOSITIVO
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -157,29 +153,12 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
                       child: Column(
                         children: [
                           const Text(
-                            'Aplicacion: BDJ Studio Sample Pad',
+                            'ID DEL DISPOSITIVO',
                             style: TextStyle(
                               fontSize: 11,
                               color: Colors.white70,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Version: $_appVersion',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Colors.white54,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          const Text(
-                            'CÓDIGO DE DISPOSITIVO ÚNICO (HWID)',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: Colors.white54,
                               fontWeight: FontWeight.bold,
-                              letterSpacing: 0.8,
+                              letterSpacing: 1.0,
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -212,7 +191,7 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
                               color: Colors.cyanAccent,
                             ),
                             label: const Text(
-                              'Copiar Código HWID',
+                              'Copiar ID',
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.bold,
@@ -225,7 +204,7 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
                               );
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
-                                  duration: const Duration(seconds: 2),
+                                  duration: Duration(seconds: 2),
                                   backgroundColor: Color(0xFF00F0FF),
                                   content: Text(
                                     '¡Código HWID copiado al portapapeles! ✓',
@@ -338,28 +317,6 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
                               ),
                       ),
                     ),
-                    const SizedBox(height: 16),
-                    const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.verified_user_rounded,
-                          color: Colors.cyanAccent,
-                          size: 14,
-                        ),
-                        SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            'Licencia válida para 1 dispositivo',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: Colors.white60,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
                   ],
                 ),
               ),
@@ -393,7 +350,7 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
                     CircularProgressIndicator(color: Colors.cyanAccent),
                     SizedBox(height: 16),
                     Text(
-                      'Validando licencia con el servidor...',
+                      'Validando licencia...',
                       style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,

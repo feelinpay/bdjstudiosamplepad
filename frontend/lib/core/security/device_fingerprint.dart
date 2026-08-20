@@ -1,33 +1,125 @@
+import 'dart:convert';
 import 'dart:io';
-import 'package:device_info_plus/device_info_plus.dart';
-import 'package:bdj_license_core/bdj_license_core.dart';
 
+import 'package:bdj_license_core/bdj_license_core.dart';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'security_port.dart';
+
+/// Genera la huella de dispositivo (HWID) siguiendo el estándar bdj_license_core V2,
+/// basada en identificadores de hardware físicos inmutables que persisten ante formateos.
+///
+/// Consistencia entre apps: el algoritmo y las fuentes de hardware son idénticos en
+/// todas las apps BDJ Studio, por lo que en la misma máquina el ID es el mismo.
+///
+/// Persistencia y reutilización:
+///  - El primer arranque calcula el HWID desde el hardware y lo guarda junto a una
+///    "firma de estabilidad" (hash de los componentes NO volátiles).
+///  - En arranques posteriores se reutiliza el HWID guardado SIEMPRE que la firma de
+///    estabilidad siga coincidiendo (mismo hardware físico), aunque el sistema se haya
+///    formateado o el identificador volátil (ANDROID_ID / identifierForVendor) cambie.
+///  - En Android también se replica el registro en shared_preferences (incluido en
+///    Android Auto Backup) para sobrevivir a un factory reset al restaurar el respaldo.
 class DeviceFingerprint {
+  DeviceFingerprint({
+    Future<String?> Function()? readPersisted,
+    Future<void> Function(String value)? writePersisted,
+  })  : _readPersisted = readPersisted,
+        _writePersisted = writePersisted;
+
+  /// Clave compartida para el registro persistente (HWID + firma de estabilidad).
+  static const String persistedKey = 'bdj.hwid.v2';
+
+  final Future<String?> Function()? _readPersisted;
+  final Future<void> Function(String value)? _writePersisted;
+
   final DeviceInfoPlugin _deviceInfo = DeviceInfoPlugin();
   static String? _cachedFingerprint;
+
+  /// Fábrica que conecta la persistencia al almacenamiento seguro de la app.
+  /// En Android replica el registro en shared_preferences (respaldo Auto Backup).
+  static DeviceFingerprint withPersistentStorage(SecurityPort storage) {
+    return DeviceFingerprint(
+      readPersisted: () => _readPersistedValue(storage),
+      writePersisted: (value) => _writePersistedValue(storage, value),
+    );
+  }
+
+  static Future<String?> _readPersistedValue(SecurityPort storage) async {
+    final secure = (await storage.readSecure(persistedKey)).getOrElse(() => null);
+    if (secure != null && secure.isNotEmpty) return secure;
+    if (Platform.isAndroid) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        return prefs.getString(persistedKey);
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  static Future<void> _writePersistedValue(SecurityPort storage, String value) async {
+    await storage.storeSecure(persistedKey, value);
+    if (Platform.isAndroid) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(persistedKey, value);
+      } catch (_) {}
+    }
+  }
 
   Future<String> generate() async {
     if (_cachedFingerprint != null) return _cachedFingerprint!;
     final result = await generateResult();
-    _cachedFingerprint = result.visibleHwid;
+    _cachedFingerprint = await _resolvePersisted(result);
     return _cachedFingerprint!;
+  }
+
+  Future<String> _resolvePersisted(HwidResult result) async {
+    if (_readPersisted == null || _writePersisted == null) return result.visibleHwid;
+    try {
+      final stored = await _readPersisted();
+      if (stored != null && stored.isNotEmpty) {
+        final record = jsonDecode(stored);
+        if (record is Map<String, dynamic>) {
+          final storedFp = record['f'];
+          final storedSig = record['s'];
+          if (storedFp is String &&
+              storedFp.isNotEmpty &&
+              storedSig == result.stabilitySignature) {
+            return storedFp;
+          }
+        }
+      }
+    } catch (_) {}
+
+    try {
+      await _writePersisted(
+        jsonEncode(<String, String>{
+          'f': result.visibleHwid,
+          's': result.stabilitySignature,
+        }),
+      );
+    } catch (_) {}
+    return result.visibleHwid;
   }
 
   Future<HwidResult> generateResult() async {
     if (Platform.isAndroid) {
-      var android = await _deviceInfo.androidInfo;
-      // ANDROID: Usar Android ID como elemento principal. No incluir model, brand, device ni versión como parte vinculante.
+      final android = await _deviceInfo.androidInfo;
       return HwidEngine.canonicalize(
         platform: 'android',
         components: {
           'id': android.id,
+          'brand': android.brand,
+          'device': android.device,
+          'hardware': android.hardware,
+          'board': android.board,
+          'model': android.model,
         },
       );
     } else if (Platform.isIOS) {
-      var ios = await _deviceInfo.iosInfo;
-      // IOS: Usar identifierForVendor como identificador de plataforma. No incluir name, systemVersion ni systemName.
-      // Nota de documentación: identifierForVendor puede cambiar cuando el usuario elimina todas las aplicaciones
-      // del mismo vendor del dispositivo. No se promete persistencia absoluta tras desinstalación completa.
+      final ios = await _deviceInfo.iosInfo;
       return HwidEngine.canonicalize(
         platform: 'ios',
         components: {
@@ -35,8 +127,16 @@ class DeviceFingerprint {
         },
       );
     } else if (Platform.isWindows) {
-      var windows = await _deviceInfo.windowsInfo;
-      // WINDOWS: MachineGuid o deviceId estable. No incluir RAM, MAC ni nombre de equipo o usuario.
+      final hwIds = _getWindowsHardwareIds();
+      if (hwIds.isNotEmpty && hwIds.containsKey('smbiosUuid')) {
+        return HwidEngine.canonicalize(
+          platform: 'windows',
+          components: hwIds,
+        );
+      }
+
+      // Fallback a machineGuid si WMI no está accesible
+      final windows = await _deviceInfo.windowsInfo;
       return HwidEngine.canonicalize(
         platform: 'windows',
         components: {
@@ -44,8 +144,7 @@ class DeviceFingerprint {
         },
       );
     } else if (Platform.isMacOS) {
-      var macos = await _deviceInfo.macOsInfo;
-      // MACOS: systemGUID / platform UUID. No incluir computerName ni usuario.
+      final macos = await _deviceInfo.macOsInfo;
       return HwidEngine.canonicalize(
         platform: 'macos',
         components: {
@@ -53,8 +152,7 @@ class DeviceFingerprint {
         },
       );
     } else if (Platform.isLinux) {
-      var linux = await _deviceInfo.linuxInfo;
-      // LINUX: /etc/machine-id y /sys/class/dmi/id/product_uuid cuando esté disponible. No incluir prettyName ni interfaces de red.
+      final linux = await _deviceInfo.linuxInfo;
       String? dmiUuid;
       try {
         final dmiFile = File('/sys/class/dmi/id/product_uuid');
@@ -82,6 +180,43 @@ class DeviceFingerprint {
       );
     }
 
-    throw const DeviceFingerprintFailure('Plataforma desconocida o no compatible (unknown_platform).');
+    throw const DeviceFingerprintFailure(
+      'Plataforma desconocida o no compatible (unknown_platform).',
+    );
+  }
+
+  Map<String, String> _getWindowsHardwareIds() {
+    try {
+      final result = Process.runSync(
+        'powershell',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          r'$p = Get-CimInstance Win32_ComputerSystemProduct; $c = Get-CimInstance Win32_Processor; $b = Get-CimInstance Win32_BaseBoard; "$($p.UUID)`n$($c.ProcessorId)`n$($b.SerialNumber)"',
+        ],
+      );
+
+      if (result.exitCode == 0) {
+        final lines = (result.stdout as String)
+            .split(RegExp(r'\r?\n'))
+            .map((l) => l.trim())
+            .where((l) => l.isNotEmpty)
+            .toList();
+
+        if (lines.isNotEmpty) {
+          final uuid = lines[0];
+          final cpu = lines.length > 1 ? lines[1] : '';
+          final board = lines.length > 2 ? lines[2] : '';
+
+          return {
+            if (uuid.isNotEmpty && uuid.toLowerCase() != 'null') 'smbiosUuid': uuid,
+            if (cpu.isNotEmpty && cpu.toLowerCase() != 'null') 'cpuId': cpu,
+            if (board.isNotEmpty && board.toLowerCase() != 'null') 'baseboardSerial': board,
+          };
+        }
+      }
+    } catch (_) {}
+    return {};
   }
 }

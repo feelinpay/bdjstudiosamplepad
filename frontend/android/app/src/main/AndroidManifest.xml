@@ -6,8 +6,8 @@
     <application
         android:label="BDJ Studio Sample Pad"
         android:name="${applicationName}"
-        android:allowBackup="false"
-        android:fullBackupContent="false"
+        android:allowBackup="true"
+        android:fullBackupContent="true"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
