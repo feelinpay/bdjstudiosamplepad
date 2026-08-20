@@ -262,7 +262,7 @@ class FolderTransferService {
     try {
       var bytes = await File(filePath).readAsBytes();
       var archive = await compute(decodeZipInIsolate, bytes);
-      return _processArchive(archive);
+      return await _processArchive(archive);
     } catch (_) {
       return null;
     }

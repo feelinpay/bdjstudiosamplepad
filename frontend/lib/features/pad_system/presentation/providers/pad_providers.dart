@@ -744,13 +744,13 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     var workspace = await ref.read(currentWorkspaceProvider.future);
     if (workspace == null) return;
 
-    int? newTarget;
     var sourceModel = await isar.padModels.get(sourceId);
     if (sourceModel == null) return;
 
-    if (sourceModel.padTypeIndex == 1 && sourceModel.targetPageIndex != null) {
-      newTarget = await _nextHiddenPageIndex();
-    }
+    final int? newTarget =
+        (sourceModel.padTypeIndex == 1 && sourceModel.targetPageIndex != null)
+            ? await _nextHiddenPageIndex()
+            : null;
 
     await isar.writeTxn(() async {
       if (newTarget != null) {
