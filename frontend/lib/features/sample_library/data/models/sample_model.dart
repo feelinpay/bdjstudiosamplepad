@@ -1,4 +1,4 @@
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 import 'genre_model.dart';
 import 'folder_model.dart';
 

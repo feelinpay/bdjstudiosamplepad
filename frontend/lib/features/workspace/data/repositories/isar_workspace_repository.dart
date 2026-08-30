@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 import '../../domain/repositories/workspace_repository.dart';
 import '../models/workspace_model.dart';
 import '../models/page_model.dart';

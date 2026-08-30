@@ -41,8 +41,14 @@ dependencies:
   package_info_plus: ^9.0.1
   flutter_soloud:
     path: third_party/flutter_soloud
-  isar: ^3.1.0+1
-  isar_flutter_libs: ^3.1.0+1
+  # Fork mantenido de Isar v3. isar 3.1.0 esta abandonado y su libisar.so
+  # se compila con alineacion de 4 KB, lo que impide cargarla en dispositivos
+  # Android con paginas de 16 KB (Android 15+, p. ej. Galaxy S25).
+  # isar_community >= 3.2.0-dev.1 enlaza con -Wl,-z,max-page-size=16384
+  # y ademas declara el namespace AGP 8, por lo que ya no hace falta
+  # vendorizar el paquete.
+  isar_community: ^3.3.2
+  isar_community_flutter_libs: ^3.3.2
   dartz: ^0.10.1
   path_provider: ^2.1.6
   file_picker: ^11.0.2
@@ -73,11 +79,10 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
 
-dependency_overrides:
-  # Isar 3.1 predates AGP 8 namespaces; this vendored copy only modernizes
-  # Android metadata while preserving the exact native database engine.
-  isar_flutter_libs:
-    path: third_party/isar_flutter_libs
+  # Generador de esquemas de Isar (debe ir siempre a la misma version que
+  # isar_community / isar_community_flutter_libs).
+  isar_community_generator: ^3.3.2
+  build_runner: ^2.4.13
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

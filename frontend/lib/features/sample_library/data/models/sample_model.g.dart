@@ -58,6 +58,7 @@ const SampleModelSchema = CollectionSchema(
       type: IsarType.string,
     ),
   },
+
   estimateSize: _sampleModelEstimateSize,
   serialize: _sampleModelSerialize,
   deserialize: _sampleModelDeserialize,
@@ -171,10 +172,11 @@ const SampleModelSchema = CollectionSchema(
     ),
   },
   embeddedSchemas: {},
+
   getId: _sampleModelGetId,
   getLinks: _sampleModelGetLinks,
   attach: _sampleModelAttach,
-  version: '3.1.0+1',
+  version: '3.3.2',
 );
 
 int _sampleModelEstimateSize(
@@ -1169,6 +1171,7 @@ extension SampleModelQueryFilter
         FilterCondition.equalTo(
           property: r'bpm',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -1186,6 +1189,7 @@ extension SampleModelQueryFilter
           include: include,
           property: r'bpm',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -1203,6 +1207,7 @@ extension SampleModelQueryFilter
           include: include,
           property: r'bpm',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -1224,6 +1229,7 @@ extension SampleModelQueryFilter
           includeLower: includeLower,
           upper: upper,
           includeUpper: includeUpper,
+
           epsilon: epsilon,
         ),
       );
@@ -1255,6 +1261,7 @@ extension SampleModelQueryFilter
         FilterCondition.equalTo(
           property: r'durationInSeconds',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -1273,6 +1280,7 @@ extension SampleModelQueryFilter
           include: include,
           property: r'durationInSeconds',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -1291,6 +1299,7 @@ extension SampleModelQueryFilter
           include: include,
           property: r'durationInSeconds',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -1313,6 +1322,7 @@ extension SampleModelQueryFilter
           includeLower: includeLower,
           upper: upper,
           includeUpper: includeUpper,
+
           epsilon: epsilon,
         ),
       );

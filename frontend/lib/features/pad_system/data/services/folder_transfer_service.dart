@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../../../core/services/app_storage_service.dart';
 import '../../../../core/theme/app_colors.dart';

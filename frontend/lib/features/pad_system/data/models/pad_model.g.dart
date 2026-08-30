@@ -85,11 +85,12 @@ const PadModelSchema = CollectionSchema(
       name: r'triggerModeIndex',
       type: IsarType.long,
     ),
-    r'volume': PropertySchema(id: 23, name: r'volume', type: IsarType.double),
-    r'width': PropertySchema(id: 20, name: r'width', type: IsarType.double),
-    r'x': PropertySchema(id: 21, name: r'x', type: IsarType.double),
-    r'y': PropertySchema(id: 22, name: r'y', type: IsarType.double),
+    r'volume': PropertySchema(id: 20, name: r'volume', type: IsarType.double),
+    r'width': PropertySchema(id: 21, name: r'width', type: IsarType.double),
+    r'x': PropertySchema(id: 22, name: r'x', type: IsarType.double),
+    r'y': PropertySchema(id: 23, name: r'y', type: IsarType.double),
   },
+
   estimateSize: _padModelEstimateSize,
   serialize: _padModelSerialize,
   deserialize: _padModelDeserialize,
@@ -125,10 +126,11 @@ const PadModelSchema = CollectionSchema(
     ),
   },
   embeddedSchemas: {},
+
   getId: _padModelGetId,
   getLinks: _padModelGetLinks,
   attach: _padModelAttach,
-  version: '3.1.0+1',
+  version: '3.3.2',
 );
 
 int _padModelEstimateSize(
@@ -179,10 +181,10 @@ void _padModelSerialize(
   writer.writeLong(offsets[17], object.targetMacroId);
   writer.writeLong(offsets[18], object.targetPageIndex);
   writer.writeLong(offsets[19], object.triggerModeIndex);
-  writer.writeDouble(offsets[20], object.width);
-  writer.writeDouble(offsets[21], object.x);
-  writer.writeDouble(offsets[22], object.y);
-  writer.writeDouble(offsets[23], object.volume);
+  writer.writeDouble(offsets[20], object.volume);
+  writer.writeDouble(offsets[21], object.width);
+  writer.writeDouble(offsets[22], object.x);
+  writer.writeDouble(offsets[23], object.y);
 }
 
 PadModel _padModelDeserialize(
@@ -213,10 +215,10 @@ PadModel _padModelDeserialize(
   object.targetMacroId = reader.readLongOrNull(offsets[17]);
   object.targetPageIndex = reader.readLongOrNull(offsets[18]);
   object.triggerModeIndex = reader.readLong(offsets[19]);
-  object.width = reader.readDouble(offsets[20]);
-  object.x = reader.readDouble(offsets[21]);
-  object.y = reader.readDouble(offsets[22]);
-  object.volume = reader.readDouble(offsets[23]);
+  object.volume = reader.readDouble(offsets[20]);
+  object.width = reader.readDouble(offsets[21]);
+  object.x = reader.readDouble(offsets[22]);
+  object.y = reader.readDouble(offsets[23]);
   return object;
 }
 
@@ -968,6 +970,7 @@ extension PadModelQueryFilter
         FilterCondition.equalTo(
           property: r'height',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -985,6 +988,7 @@ extension PadModelQueryFilter
           include: include,
           property: r'height',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -1002,6 +1006,7 @@ extension PadModelQueryFilter
           include: include,
           property: r'height',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -1023,6 +1028,7 @@ extension PadModelQueryFilter
           includeLower: includeLower,
           upper: upper,
           includeUpper: includeUpper,
+
           epsilon: epsilon,
         ),
       );
@@ -1424,6 +1430,7 @@ extension PadModelQueryFilter
         FilterCondition.equalTo(
           property: r'pan',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -1441,6 +1448,7 @@ extension PadModelQueryFilter
           include: include,
           property: r'pan',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -1458,6 +1466,7 @@ extension PadModelQueryFilter
           include: include,
           property: r'pan',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -1479,6 +1488,7 @@ extension PadModelQueryFilter
           includeLower: includeLower,
           upper: upper,
           includeUpper: includeUpper,
+
           epsilon: epsilon,
         ),
       );
@@ -1494,6 +1504,7 @@ extension PadModelQueryFilter
         FilterCondition.equalTo(
           property: r'pitch',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -1511,6 +1522,7 @@ extension PadModelQueryFilter
           include: include,
           property: r'pitch',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -1528,6 +1540,7 @@ extension PadModelQueryFilter
           include: include,
           property: r'pitch',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -1549,6 +1562,7 @@ extension PadModelQueryFilter
           includeLower: includeLower,
           upper: upper,
           includeUpper: includeUpper,
+
           epsilon: epsilon,
         ),
       );
@@ -1989,6 +2003,80 @@ extension PadModelQueryFilter
     });
   }
 
+  QueryBuilder<PadModel, PadModel, QAfterFilterCondition> volumeEqualTo(
+    double value, {
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'volume',
+          value: value,
+
+          epsilon: epsilon,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<PadModel, PadModel, QAfterFilterCondition> volumeGreaterThan(
+    double value, {
+    bool include = false,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'volume',
+          value: value,
+
+          epsilon: epsilon,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<PadModel, PadModel, QAfterFilterCondition> volumeLessThan(
+    double value, {
+    bool include = false,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'volume',
+          value: value,
+
+          epsilon: epsilon,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<PadModel, PadModel, QAfterFilterCondition> volumeBetween(
+    double lower,
+    double upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'volume',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+
+          epsilon: epsilon,
+        ),
+      );
+    });
+  }
+
   QueryBuilder<PadModel, PadModel, QAfterFilterCondition> widthEqualTo(
     double value, {
     double epsilon = Query.epsilon,
@@ -1998,6 +2086,7 @@ extension PadModelQueryFilter
         FilterCondition.equalTo(
           property: r'width',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -2015,6 +2104,7 @@ extension PadModelQueryFilter
           include: include,
           property: r'width',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -2032,6 +2122,7 @@ extension PadModelQueryFilter
           include: include,
           property: r'width',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -2053,6 +2144,7 @@ extension PadModelQueryFilter
           includeLower: includeLower,
           upper: upper,
           includeUpper: includeUpper,
+
           epsilon: epsilon,
         ),
       );
@@ -2081,6 +2173,7 @@ extension PadModelQueryFilter
           include: include,
           property: r'x',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -2098,6 +2191,7 @@ extension PadModelQueryFilter
           include: include,
           property: r'x',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -2119,6 +2213,7 @@ extension PadModelQueryFilter
           includeLower: includeLower,
           upper: upper,
           includeUpper: includeUpper,
+
           epsilon: epsilon,
         ),
       );
@@ -2147,6 +2242,7 @@ extension PadModelQueryFilter
           include: include,
           property: r'y',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -2164,6 +2260,7 @@ extension PadModelQueryFilter
           include: include,
           property: r'y',
           value: value,
+
           epsilon: epsilon,
         ),
       );
@@ -2185,6 +2282,7 @@ extension PadModelQueryFilter
           includeLower: includeLower,
           upper: upper,
           includeUpper: includeUpper,
+
           epsilon: epsilon,
         ),
       );
@@ -2465,6 +2563,18 @@ extension PadModelQuerySortBy on QueryBuilder<PadModel, PadModel, QSortBy> {
   QueryBuilder<PadModel, PadModel, QAfterSortBy> sortByTriggerModeIndexDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'triggerModeIndex', Sort.desc);
+    });
+  }
+
+  QueryBuilder<PadModel, PadModel, QAfterSortBy> sortByVolume() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'volume', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PadModel, PadModel, QAfterSortBy> sortByVolumeDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'volume', Sort.desc);
     });
   }
 
@@ -2760,6 +2870,18 @@ extension PadModelQuerySortThenBy
     });
   }
 
+  QueryBuilder<PadModel, PadModel, QAfterSortBy> thenByVolume() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'volume', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PadModel, PadModel, QAfterSortBy> thenByVolumeDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'volume', Sort.desc);
+    });
+  }
+
   QueryBuilder<PadModel, PadModel, QAfterSortBy> thenByWidth() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'width', Sort.asc);
@@ -2928,6 +3050,12 @@ extension PadModelQueryWhereDistinct
     });
   }
 
+  QueryBuilder<PadModel, PadModel, QDistinct> distinctByVolume() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'volume');
+    });
+  }
+
   QueryBuilder<PadModel, PadModel, QDistinct> distinctByWidth() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'width');
@@ -3076,6 +3204,12 @@ extension PadModelQueryProperty
     });
   }
 
+  QueryBuilder<PadModel, double, QQueryOperations> volumeProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'volume');
+    });
+  }
+
   QueryBuilder<PadModel, double, QQueryOperations> widthProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'width');
@@ -3094,4 +3228,3 @@ extension PadModelQueryProperty
     });
   }
 }
-

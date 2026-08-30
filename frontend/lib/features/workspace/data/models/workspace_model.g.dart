@@ -25,6 +25,7 @@ const WorkspaceModelSchema = CollectionSchema(
     r'isLocked': PropertySchema(id: 1, name: r'isLocked', type: IsarType.bool),
     r'name': PropertySchema(id: 2, name: r'name', type: IsarType.string),
   },
+
   estimateSize: _workspaceModelEstimateSize,
   serialize: _workspaceModelSerialize,
   deserialize: _workspaceModelDeserialize,
@@ -55,10 +56,11 @@ const WorkspaceModelSchema = CollectionSchema(
     ),
   },
   embeddedSchemas: {},
+
   getId: _workspaceModelGetId,
   getLinks: _workspaceModelGetLinks,
   attach: _workspaceModelAttach,
-  version: '3.1.0+1',
+  version: '3.3.2',
 );
 
 int _workspaceModelEstimateSize(

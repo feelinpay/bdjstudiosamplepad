@@ -127,7 +127,9 @@ class DeviceFingerprint {
         },
       );
     } else if (Platform.isWindows) {
-      final hwIds = _getWindowsHardwareIds();
+      // Asíncrono (nunca runSync): WMI vía PowerShell puede tardar varios
+      // segundos en PCs lentas y síncrono congelaría el isolate de UI.
+      final hwIds = await _getWindowsHardwareIds();
       if (hwIds.isNotEmpty && hwIds.containsKey('smbiosUuid')) {
         return HwidEngine.canonicalize(
           platform: 'windows',
@@ -185,9 +187,9 @@ class DeviceFingerprint {
     );
   }
 
-  Map<String, String> _getWindowsHardwareIds() {
+  Future<Map<String, String>> _getWindowsHardwareIds() async {
     try {
-      final result = Process.runSync(
+      final result = await Process.run(
         'powershell',
         [
           '-NoProfile',

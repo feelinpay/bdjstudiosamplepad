@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 import '../../data/models/workspace_model.dart';
 import '../../data/models/page_model.dart';
 import '../../../pad_system/data/models/pad_model.dart';

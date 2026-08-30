@@ -3,7 +3,7 @@ import 'dart:ffi';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 import 'package:path/path.dart' as p;
 
 import 'helpers/path_provider_test_helper.dart';
@@ -18,7 +18,7 @@ import 'package:bdj_studio_sample_pad/features/midi/data/models/midi_mapping_mod
 import 'package:bdj_studio_sample_pad/features/macros/data/models/macro_model.dart';
 import 'package:bdj_studio_sample_pad/features/settings/data/services/config_backup_service.dart';
 
-/// Localiza la librería nativa de Isar empaquetada por `isar_flutter_libs`.
+/// Localiza la librería nativa de Isar empaquetada por `isar_community_flutter_libs`.
 String? _isarNativeLibPath() {
   final configFile = File(p.join('.dart_tool', 'package_config.json'));
   if (!configFile.existsSync()) return null;
@@ -34,16 +34,30 @@ String? _isarNativeLibPath() {
   if (packages is! List) return null;
   for (final entry in packages) {
     if (entry is! Map<String, dynamic>) continue;
-    if (entry['name'] != 'isar_flutter_libs') continue;
+    if (entry['name'] != 'isar_community_flutter_libs') continue;
     final rootUri = entry['rootUri'];
     if (rootUri is! String) continue;
     final uri = Uri.parse(rootUri);
     final pkgDir = uri.isAbsolute
         ? Directory.fromUri(uri)
         : Directory(p.join(configDir.path, rootUri));
-    if (Platform.isWindows) return p.join(pkgDir.path, 'windows', 'isar.dll');
-    if (Platform.isMacOS) return p.join(pkgDir.path, 'macos', 'libisar.dylib');
-    if (Platform.isLinux) return p.join(pkgDir.path, 'linux', 'libisar.so');
+    // isar_community renombro la libreria nativa de Windows: `isar.dll` en el
+    // paquete original, `libisar.dll` desde isar_community 3.2. Se prueban los
+    // nombres conocidos y se devuelve el primero que exista, porque acertar mal
+    // aqui falla en silencio: quien llama descarta la ruta inexistente, Isar cae
+    // a su nombre por defecto relativo al directorio de trabajo y el sintoma es
+    // un `error code 126` que no dice nada sobre la causa real.
+    final candidates = <String>[
+      if (Platform.isWindows) ...[
+        p.join(pkgDir.path, 'windows', 'libisar.dll'),
+        p.join(pkgDir.path, 'windows', 'isar.dll'),
+      ],
+      if (Platform.isMacOS) p.join(pkgDir.path, 'macos', 'libisar.dylib'),
+      if (Platform.isLinux) p.join(pkgDir.path, 'linux', 'libisar.so'),
+    ];
+    for (final candidate in candidates) {
+      if (File(candidate).existsSync()) return candidate;
+    }
     return null;
   }
   return null;

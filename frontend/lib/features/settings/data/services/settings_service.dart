@@ -1,5 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../core/platform/device_tier.dart';
+
 class SettingsService {
   static const _keyAudioOutputDeviceId = 'audio_output_device_id';
   static const _keySoundCacheCapacity = 'sound_cache_capacity';
@@ -52,7 +54,13 @@ class SettingsService {
     }
   }
 
-  int get soundCacheCapacity => _prefs.getInt(_keySoundCacheCapacity) ?? 100;
+  /// Sin preferencia guardada se usa el presupuesto según la gama del
+  /// dispositivo (25 sonidos en gama baja vs 100 en gama alta): mantener 100
+  /// fuentes decodificadas en memoria en un equipo de 2 GB provoca presión de
+  /// RAM y cierres por memoria.
+  int get soundCacheCapacity =>
+      _prefs.getInt(_keySoundCacheCapacity) ??
+      DeviceTierDetector.soundCacheCapacity;
   Future<void> setSoundCacheCapacity(int value) =>
       _prefs.setInt(_keySoundCacheCapacity, value);
 

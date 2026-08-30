@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as p;
 import '../widgets/pad_grid_view.dart';
 import '../widgets/pad_add_actions.dart';
 import '../widgets/pad_delete_actions.dart';
@@ -22,6 +24,7 @@ import '../../../workspace/data/models/workspace_model.dart';
 import '../../../../core/providers/core_providers.dart';
 import '../../../../core/providers/audio_providers.dart';
 import '../../../../core/providers/database_provider.dart';
+import '../../../../core/services/saf_folder_import_service.dart';
 import '../../../../core/audio/audio_initialization_result.dart';
 import '../../../../core/audio/audio_engine_state.dart';
 
@@ -217,6 +220,12 @@ class _ExplorerBody extends ConsumerWidget {
     final isFolder = currentPageIndex >= 1000;
     final accentColor = highContrast ? Colors.yellowAccent : Colors.cyanAccent;
     const appBarBg = Color(0xFF0E121B);
+    // En pantallas angostas el modo edicion desborda el AppBar (Crear +
+    // Eliminar con texto + MIDI + metronomo + editar ≈ 382px en 360dp).
+    // Compactamos a iconos y ocultamos indicadores secundarios.
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final compactBar = screenWidth < 430;
+    final ultraNarrowBar = screenWidth < 350;
 
     // AppBar con selección de pads
     if (ref.watch(selectedPadsProvider).isNotEmpty) {
@@ -344,29 +353,51 @@ class _ExplorerBody extends ConsumerWidget {
           const PadSearchBarWidget(),
         ],
         if (isEditMode) ...[
-          TextButton.icon(
-            onPressed: () => PadAddActions.showAddMenu(context, ref),
-            icon: const Icon(
-              Icons.add_circle_outline_rounded,
-              color: Colors.greenAccent,
-              size: 18,
+          if (compactBar)
+            IconButton(
+              tooltip: 'Crear',
+              icon: const Icon(
+                Icons.add_circle_outline_rounded,
+                color: Colors.greenAccent,
+                size: 22,
+              ),
+              onPressed: () => PadAddActions.showAddMenu(context, ref),
+            )
+          else
+            TextButton.icon(
+              onPressed: () => PadAddActions.showAddMenu(context, ref),
+              icon: const Icon(
+                Icons.add_circle_outline_rounded,
+                color: Colors.greenAccent,
+                size: 18,
+              ),
+              label: const Text('Crear', style: TextStyle(color: Colors.white)),
             ),
-            label: const Text('Crear', style: TextStyle(color: Colors.white)),
-          ),
-          TextButton.icon(
-            onPressed: () => PadDeleteActions.showDeleteMenu(context, ref),
-            icon: const Icon(
-              Icons.remove_circle_outline_rounded,
-              color: Colors.redAccent,
-              size: 18,
+          if (compactBar)
+            IconButton(
+              tooltip: 'Eliminar',
+              icon: const Icon(
+                Icons.remove_circle_outline_rounded,
+                color: Colors.redAccent,
+                size: 22,
+              ),
+              onPressed: () => PadDeleteActions.showDeleteMenu(context, ref),
+            )
+          else
+            TextButton.icon(
+              onPressed: () => PadDeleteActions.showDeleteMenu(context, ref),
+              icon: const Icon(
+                Icons.remove_circle_outline_rounded,
+                color: Colors.redAccent,
+                size: 18,
+              ),
+              label: const Text(
+                'Eliminar',
+                style: TextStyle(color: Colors.white),
+              ),
             ),
-            label: const Text(
-              'Eliminar',
-              style: TextStyle(color: Colors.white),
-            ),
-          ),
-          const MidiStatusIcon(),
-          const MetronomeButton(),
+          if (!ultraNarrowBar) const MidiStatusIcon(),
+          if (!ultraNarrowBar) const MetronomeButton(),
         ],
         IconButton(
           icon: Icon(
@@ -606,31 +637,93 @@ class _ExplorerBody extends ConsumerWidget {
   }
 
   Future<void> _importWorkspace(BuildContext context, WidgetRef ref) async {
+    Directory? cacheRoot;
     try {
-      final folderPath = await FilePicker.getDirectoryPath();
-      if (folderPath == null || folderPath.isEmpty) return;
+      // En Android pedir acceso completo una vez por sesión: con ese permiso
+      // la importación funciona exactamente igual que en PC.
+      if (Platform.isAndroid) {
+        await PadAddActions.ensureAndroidStorageAccess(context);
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      }
+
+      var sourcePath = await FilePicker.getDirectoryPath().timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {
+          debugPrint('BDJ WS Import: selector timeout (5 min) → null');
+          return null;
+        },
+      );
+      if (sourcePath == null || sourcePath.isEmpty) return;
+
       final importer = ref.read(workspaceImporterProvider);
-      final workspaceName = await importer.importWorkspace(folderPath);
+      WorkspaceModel? importedWorkspace;
+
+      if (Platform.isAndroid) {
+        final treeLike = SafFolderImportService.looksLikeTreeUri(sourcePath);
+        final resolved = LocalAudioStorageService.resolveContentUriToPath(sourcePath);
+        debugPrint(
+          'BDJ WS Import: uri=$sourcePath resolved=$resolved treeLike=$treeLike',
+        );
+
+        // Estrategia 1: copiar el árbol SAF al cache (sin permisos) e importarlo.
+        String? candidatePath;
+        if (treeLike) {
+          final progress = ValueNotifier<int>(0);
+          PadAddActions.showScanningDialog(context, progress);
+          SafImportResult? copied;
+          try {
+            copied = await SafFolderImportService.copyTreeToLocalCache(
+              sourcePath,
+              destName: 'workspace',
+              onProgress: (n) => progress.value = n,
+            );
+          } catch (error, st) {
+            debugPrint('BDJ WS Import: SAF copy exception: $error\n$st');
+          } finally {
+            if (context.mounted) ConcurrencyShield.safeRootPop(context);
+            progress.dispose();
+          }
+          if (copied != null && copied.root.totalAudioCount > 0) {
+            cacheRoot = copied.cacheDirectory;
+            candidatePath = p.join(cacheRoot.path, copied.root.name);
+          }
+        }
+
+        // Estrategia 2: importar directo de la ruta física resuelta
+        // (funciona cuando se concedió "Todos los archivos").
+        if (candidatePath != null) {
+          importedWorkspace = await importer.importWorkspace(candidatePath);
+        }
+        if (importedWorkspace == null && Directory(resolved).existsSync()) {
+          importedWorkspace = await importer.importWorkspace(resolved);
+        }
+      } else {
+        importedWorkspace = await importer.importWorkspace(sourcePath);
+      }
+
       if (!context.mounted) return;
-      if (workspaceName == null) {
+      if (importedWorkspace == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            duration: const Duration(seconds: 2),
-            content: Text('La carpeta no contiene archivos de audio.'),
+            duration: Duration(seconds: 3),
+            content: Text(
+              'La carpeta no contiene archivos de audio compatibles '
+              '(MP3, WAV, FLAC, OGG...) ni en sus subcarpetas.',
+            ),
           ),
         );
         return;
       }
       ref.invalidate(workspaceListProvider);
       ref.invalidate(currentWorkspaceProvider);
-      final wsId = workspaceName.id;
+      final wsId = importedWorkspace.id;
       // Use safe workspace switching with request ID
       await switchWorkspaceWithRequestId(ref, wsId);
       ref.invalidate(padPageProvider);
       ref.read(currentPageIndexProvider.notifier).state = 0;
       ref.read(folderBackStackProvider.notifier).state = <int>[];
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(duration: const Duration(seconds: 2), content: Text('Workspace "${workspaceName.name}" importado.')),
+        SnackBar(duration: const Duration(seconds: 2), content: Text('Workspace "${importedWorkspace.name}" importado.')),
       );
     } on Object catch (error) {
       if (context.mounted) {
@@ -638,6 +731,8 @@ class _ExplorerBody extends ConsumerWidget {
           SnackBar(duration: const Duration(seconds: 2), content: Text('Error al importar el workspace: $error')),
         );
       }
+    } finally {
+      await SafFolderImportService.deleteCachedCopy(cacheRoot);
     }
   }
 

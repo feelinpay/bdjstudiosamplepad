@@ -17,7 +17,7 @@ import '../../../pad_system/data/models/pad_model.dart';
 import '../../../../core/audio/trigger_mode.dart';
 import '../../../../core/audio/pad_trigger_resolver.dart';
 import '../../../workspace/presentation/providers/workspace_providers.dart';
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 
 // Motor MIDI
 final midiEngineProvider = Provider<MidiEnginePort>((ref) {

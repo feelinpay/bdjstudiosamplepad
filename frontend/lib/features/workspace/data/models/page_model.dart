@@ -1,4 +1,4 @@
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 import 'workspace_model.dart';
 import '../../../pad_system/data/models/pad_model.dart';
 

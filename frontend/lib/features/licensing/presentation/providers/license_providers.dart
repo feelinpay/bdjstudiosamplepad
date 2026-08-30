@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import '../../../../core/licensing/licensing_port.dart';
 import '../../../../core/licensing/license_manager.dart';
+import '../../../../core/errors/failures.dart';
 import '../../../../core/security/secure_storage_impl.dart';
 import '../../../../core/security/device_fingerprint.dart';
 
@@ -71,6 +72,15 @@ class LicenseState {
 class LicenseNotifier extends StateNotifier<LicenseState> {
   final LicenseManager _manager;
 
+  /// Presupuesto máximo para validar la licencia al arrancar.
+  ///
+  /// La validación es offline (criptográfica), pero lee del almacenamiento
+  /// seguro (Keystore de Android) y genera la huella HWID. En gama baja o con
+  /// Keystore degradado esas operaciones pueden tardar demasiado; sin límite
+  /// la app se quedaría en el spinner eterno. Con él, cae a la pantalla de
+  /// activación con mensaje y el usuario puede reintentar.
+  static const _checkBudget = Duration(seconds: 12);
+
   LicenseNotifier(this._manager) : super(const LicenseState()) {
     _checkLicense();
   }
@@ -78,7 +88,18 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
   Future<void> _checkLicense() async {
     state = state.copyWith(loadingState: LicenseLoadingState.loading);
 
-    var result = await _manager.validateLicense();
+    final Result<LicenseInfo> result;
+    try {
+      result = await _manager.validateLicense().timeout(_checkBudget);
+    } catch (e) {
+      state = state.copyWith(
+        loadingState: LicenseLoadingState.error,
+        status: _manager.currentStatus,
+        error: 'La verificación de licencia tardó demasiado. '
+            'Revisa el dispositivo e inténtalo de nuevo.',
+      );
+      return;
+    }
     result.fold(
       (failure) {
         state = state.copyWith(

@@ -91,6 +91,11 @@ abstract class AudioEnginePort {
   void setMasterFlanger(double amount);
   void setMasterDistortion(double amount);
 
+  /// Activa o desactiva la captura de datos de audio en tiempo real para
+  /// visualización. Desactivada por defecto en dispositivos de baja gama
+  /// para ahorrar CPU; los widgets de visualizador la activan bajo demanda.
+  void setVisualizationEnabled(bool enabled);
+
   Float32List? getAudioWave();
   void dispose();
 

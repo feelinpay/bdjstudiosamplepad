@@ -35,6 +35,10 @@ Thumbs.db
 *.log
 *.swp
 
+# Cache de Python de los scripts de tools/
+__pycache__/
+*.pyc
+
 # Agent tooling / skill caches
 .claude/
 .agents/

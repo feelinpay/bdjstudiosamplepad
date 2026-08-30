@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 import '../../../../core/providers/database_provider.dart';
 import '../../../../core/providers/core_providers.dart';
 import '../../../../core/services/local_audio_storage_service.dart';

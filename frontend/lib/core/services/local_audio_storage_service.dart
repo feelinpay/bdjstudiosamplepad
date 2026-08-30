@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 import '../../features/pad_system/data/models/pad_model.dart';
 import 'app_storage_service.dart';
 

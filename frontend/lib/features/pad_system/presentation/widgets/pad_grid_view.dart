@@ -7,6 +7,7 @@ import '../../../desktop/presentation/providers/desktop_providers.dart';
 import '../../../workspace/presentation/providers/workspace_providers.dart';
 import '../../../settings/presentation/providers/settings_provider.dart';
 import '../../domain/entities/pad_entity.dart';
+import '../../domain/pad_grid_layout.dart';
 import 'pad_button.dart';
 import 'pad_add_actions.dart';
 import 'pad_settings_dialog.dart';
@@ -40,69 +41,25 @@ class PadGridView extends ConsumerWidget {
     }
     return LayoutBuilder(
       builder: (context, constraints) {
-        int cross = 4;
-        double ratio = 1.05;
-        double padding = 10;
-        double spacing = 10;
-
-        if (padSize == 1) {
-          // Grandes (1 a 8 columnas)
-          cross = (constraints.maxWidth / 220.0).floor().clamp(1, 8);
-          padding = 12;
-          spacing = 12;
-        } else if (padSize == 2) {
-          // Medianos (1 a 12 columnas)
-          cross = (constraints.maxWidth / 160.0).floor().clamp(1, 12);
-          padding = 8;
-          spacing = 8;
-        } else if (padSize == 3) {
-          // Pequeños (1 a 16 columnas)
-          cross = (constraints.maxWidth / 96.0).floor().clamp(1, 16);
-          padding = 6;
-          spacing = 6;
-        } else if (padSize == 4) {
-          // Ultra Denso (2 a 20 columnas)
-          cross = (constraints.maxWidth / 82.0).floor().clamp(2, 20);
-          padding = 5;
-          spacing = 5;
-        } else if (padSize == 5) {
-          // Extra Pequeño (2 a 26 columnas, máxima densidad)
-          cross = (constraints.maxWidth / 70.0).floor().clamp(2, 26);
-          padding = 4;
-          spacing = 4;
-        } else {
-          // Auto / Medianos Adaptativo a Resolucion (TOTALMENTE RESPONSIVO)
-          if (constraints.maxWidth < 320) {
-            cross = 1;
-            ratio = 1.35;
-          } else if (constraints.maxWidth < 500) {
-            cross = 2;
-            ratio = 1.25;
-          } else if (constraints.maxWidth < 750) {
-            cross = 3;
-            ratio = 1.15;
-          } else if (constraints.maxWidth < 1050) {
-            cross = 4;
-          } else if (constraints.maxWidth < 1400) {
-            cross = 6;
-          } else if (constraints.maxWidth < 1750) {
-            cross = 8;
-          } else {
-            cross = 10;
-          }
-        }
+        // El reparto vive en PadGridLayout (logica pura, con tests): es donde
+        // escritorio y movil divergian y no debe volver a decidirse a ojo aqui.
+        final layout = PadGridLayout.resolve(
+          width: constraints.maxWidth,
+          height: constraints.hasBoundedHeight ? constraints.maxHeight : 0,
+          padSize: padSize,
+        );
 
         return GridView.builder(
           key: PageStorageKey<int>(pageIndex),
           physics: const BouncingScrollPhysics(),
           addAutomaticKeepAlives: false,
           addRepaintBoundaries: true,
-          padding: EdgeInsets.all(padding),
+          padding: EdgeInsets.all(layout.padding),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: cross,
-            childAspectRatio: ratio,
-            crossAxisSpacing: spacing,
-            mainAxisSpacing: spacing,
+            crossAxisCount: layout.columns,
+            childAspectRatio: layout.aspectRatio,
+            crossAxisSpacing: layout.spacing,
+            mainAxisSpacing: layout.spacing,
           ),
           itemCount: allPads.length,
           itemBuilder: (context, i) => _PadCell(

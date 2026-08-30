@@ -9,7 +9,7 @@ import device_info_plus
 import file_picker
 import flutter_midi_command_darwin
 import flutter_secure_storage_darwin
-import isar_flutter_libs
+import isar_community_flutter_libs
 import just_waveform
 import package_info_plus
 import shared_preferences_foundation

@@ -34,6 +34,7 @@ const MacroModelSchema = CollectionSchema(
       type: IsarType.dateTime,
     ),
   },
+
   estimateSize: _macroModelEstimateSize,
   serialize: _macroModelSerialize,
   deserialize: _macroModelDeserialize,
@@ -56,10 +57,11 @@ const MacroModelSchema = CollectionSchema(
   },
   links: {},
   embeddedSchemas: {},
+
   getId: _macroModelGetId,
   getLinks: _macroModelGetLinks,
   attach: _macroModelAttach,
-  version: '3.1.0+1',
+  version: '3.3.2',
 );
 
 int _macroModelEstimateSize(

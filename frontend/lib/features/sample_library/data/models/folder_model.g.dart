@@ -25,6 +25,7 @@ const FolderModelSchema = CollectionSchema(
     ),
     r'name': PropertySchema(id: 2, name: r'name', type: IsarType.string),
   },
+
   estimateSize: _folderModelEstimateSize,
   serialize: _folderModelSerialize,
   deserialize: _folderModelDeserialize,
@@ -40,10 +41,11 @@ const FolderModelSchema = CollectionSchema(
     ),
   },
   embeddedSchemas: {},
+
   getId: _folderModelGetId,
   getLinks: _folderModelGetLinks,
   attach: _folderModelAttach,
-  version: '3.1.0+1',
+  version: '3.3.2',
 );
 
 int _folderModelEstimateSize(

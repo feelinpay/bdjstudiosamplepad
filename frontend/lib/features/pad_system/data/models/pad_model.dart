@@ -1,4 +1,4 @@
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 import '../../../workspace/data/models/page_model.dart';
 import '../../../sample_library/data/models/sample_model.dart';
 

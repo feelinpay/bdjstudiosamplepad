@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 
 import 'app_storage_service.dart';
 import 'local_audio_storage_service.dart';

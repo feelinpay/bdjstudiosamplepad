@@ -69,6 +69,8 @@ namespace SoLoud
 #include <chrono>
 #include <thread>
 #include <mutex>
+#include <condition_variable>
+#include <atomic>
 #include "soloud_common.h"
 #if defined(_WIN32) || defined(_WIN64)
 #  include <windows.h>
@@ -122,6 +124,131 @@ namespace SoLoud
         bool useContextConfig;
     };
     static DeferredDeviceConfig gDeferredConfig;
+
+#ifdef __ANDROID__
+    // ── Bounded device-open watchdog (Android) ────────────────────────────────
+    // On many low-end Android devices the audio HAL can block indefinitely
+    // inside AAudio/OpenSL while opening the stream. miniaudio_init() runs as a
+    // synchronous FFI call on the Dart UI isolate: if the open blocks, no
+    // Dart-level timeout can ever fire and the app freezes on its splash
+    // screen forever. To keep the app responsive on ANY hardware we run the
+    // context/device open on a detached worker thread and wait with a hard
+    // deadline. If the deadline expires we flag the attempt as abandoned; the
+    // worker checks that flag at safe checkpoints and rolls back everything it
+    // opened so far.
+    //
+    // Invariants:
+    //  * Only one worker may be in flight at a time (gAndroidInitBusy). A new
+    //    init attempt while busy fails fast instead of blocking.
+    //  * Globals (context/gDevice) are only mutated by the worker between
+    //    checkpoints, and teardown paths skip/defer while a worker is alive,
+    //    so no other thread can race with it.
+    static std::atomic<bool> gAndroidInitBusy{false};        // worker in flight
+    static std::atomic<bool> gAndroidInitAbandoned{false};   // deadline expired
+    static std::atomic<bool> gAndroidInitWorkerDone{true};   // worker finished
+    static std::mutex gAndroidInitMutex;                     // guards the CV only
+    static std::condition_variable gAndroidInitCv;
+
+    // Deadline for opening the audio device on Android. Generous enough for
+    // cold-start OpenSL/AAudio on slow flash storage, short enough to keep
+    // startup snappy on 2 GB devices.
+    static const int kAndroidDeviceOpenTimeoutMs = 5000;
+
+    // Worker: opens context + device + starts it. Never blocks the caller for
+    // more than kAndroidDeviceOpenTimeoutMs because the caller stops waiting
+    // at the deadline and flags abandonment; the worker then rolls back at its
+    // next checkpoint instead of publishing/starting anything.
+    static void android_device_open_worker(
+        unsigned int aFlags,
+        ma_backend* backends,
+        ma_uint32 backendCount,
+        ma_device_config deviceConfig)
+    {
+        // Heap-owned backend list: this thread may outlive the caller's frame
+        // when the open deadline expires, so ownership transfers here.
+        auto finish = [&backends]() {
+            // Order matters: Done must be observable before Busy clears so
+            // "busy == false" always implies "previous worker fully settled".
+            gAndroidInitWorkerDone.store(true, std::memory_order_release);
+            gAndroidInitCv.notify_all();
+            gAndroidInitBusy.store(false, std::memory_order_release);
+            delete[] backends;
+        };
+
+        ma_context_config contextConfig = ma_context_config_init();
+        if (ma_context_init(backends, backendCount, &contextConfig, &context)
+                != MA_SUCCESS)
+        {
+            finish();
+            return;
+        }
+        // Checkpoint 1: context opened.
+        if (gAndroidInitAbandoned.load(std::memory_order_acquire))
+        {
+            ma_context_uninit(&context);
+            finish();
+            return;
+        }
+
+        if (ma_device_init(&context, &deviceConfig, &gDevice) != MA_SUCCESS)
+        {
+            ma_context_uninit(&context);
+            finish();
+            return;
+        }
+        // Checkpoint 2: device created (not started yet).
+        if (gAndroidInitAbandoned.load(std::memory_order_acquire))
+        {
+            ma_device_uninit(&gDevice);
+            ma_context_uninit(&context);
+            finish();
+            return;
+        }
+
+        soloud->postinit_internal(
+            gDevice.sampleRate,
+            gDevice.playback.internalPeriodSizeInFrames,
+            aFlags,
+            gDevice.playback.channels);
+
+        if (ma_device_start(&gDevice) != MA_SUCCESS)
+        {
+            soloud_platform_log("miniaudio_init: ma_device_start failed\n");
+            ma_device_uninit(&gDevice);
+            ma_context_uninit(&context);
+            finish();
+            return;
+        }
+
+        // Publish success. The caller only abandons before returning an error,
+        // which happens strictly before this publish when the deadline wins —
+        // in that case the checkpoints above already rolled back. Reaching this
+        // point means the caller is still waiting on the CV (or has already
+        // observed done=true), never mid-teardown: teardown paths defer while
+        // a worker is busy.
+        gDeviceInitialized = true;
+        gDeviceStopped = false;
+        gDeviceInitDeferred = false;
+        gDeviceStartDeferred = false;
+        finish();
+    }
+
+    // Signals any in-flight init worker to roll back and waits a BOUNDED grace
+    // period for it to settle. Used by teardown paths so they neither race the
+    // worker nor block indefinitely against a wedged audio HAL.
+    static void android_wait_for_pending_init(int graceMs)
+    {
+        if (!gAndroidInitBusy.load(std::memory_order_acquire)) return;
+        gAndroidInitAbandoned.store(true, std::memory_order_release);
+        const auto deadline = std::chrono::steady_clock::now()
+            + std::chrono::milliseconds(graceMs);
+        while (gAndroidInitBusy.load(std::memory_order_acquire)
+               && std::chrono::steady_clock::now() < deadline)
+        {
+            usleep(5000); // 5 ms
+        }
+    }
+#endif
 
     // Added by Marco Bavagnoli
     void on_notification(const ma_device_notification* pNotification)
@@ -224,6 +351,12 @@ namespace SoLoud
 
     static void soloud_miniaudio_deinit(SoLoud::Soloud *aSoloud)
     {
+#ifdef __ANDROID__
+        // A device-open worker may still be stuck inside the audio HAL. Signal
+        // it to roll back and wait a BOUNDED grace period: teardown must never
+        // block indefinitely on wedged hardware.
+        android_wait_for_pending_init(1500);
+#endif
         // Clean up initialization thread if it's still running
         if (gInitThread != nullptr)
         {
@@ -286,6 +419,12 @@ namespace SoLoud
     // state and keeps MPRemoteCommandCenter routing intact.
     result soloud_miniaudio_pause(SoLoud::Soloud *aSoloud)
     {
+#ifdef __ANDROID__
+        // Device may still be opening on the worker thread: nothing to pause
+        // and touching gDevice would race. SoLoud mixing produces silence in
+        // the meantime, so this is a safe no-op.
+        if (!gAndroidInitWorkerDone.load(std::memory_order_acquire)) return 0;
+#endif
         if (ma_device_get_state(&gDevice) == ma_device_state_started)
         {
 #if defined(__EMSCRIPTEN__) || defined(__ANDROID__)
@@ -314,6 +453,12 @@ namespace SoLoud
     {
         if (aSoloud == nullptr)
             return UNKNOWN_ERROR;
+
+#ifdef __ANDROID__
+        // Device may still be opening on the worker thread: it will be started
+        // by that same worker, so there is nothing to resume here.
+        if (!gAndroidInitWorkerDone.load(std::memory_order_acquire)) return 0;
+#endif
 
         // Check if device is stopped and start it if needed
         if (ma_device_get_state(&gDevice) == ma_device_state_stopped)
@@ -434,29 +579,73 @@ namespace SoLoud
             deviceConfig.aaudio.allowedCapturePolicy = ma_aaudio_allow_capture_by_all;
         }
 
-        ma_backend backends[] = { ma_backend_aaudio, ma_backend_opensl };
+        // Heap-allocate the backend list: the worker may outlive this frame
+        // when the deadline expires, and it frees it when done.
+        // Low-latency tries AAudio (MMAP) first; the conservative profile used
+        // by fallback attempts prefers OpenSL ES, which is the most compatible
+        // backend on budget hardware.
+        ma_backend* backendList = new ma_backend[2];
         ma_uint32 backendCount = 2;
+        if (gMiniaudioLowLatency) {
+            backendList[0] = ma_backend_aaudio;
+            backendList[1] = ma_backend_opensl;
+        } else {
+            backendList[0] = ma_backend_opensl;
+            backendList[1] = ma_backend_aaudio;
+        }
         if (android_get_device_api_level() <= 29) {
-            backends[0] = ma_backend_opensl;
+            backendList[0] = ma_backend_opensl;
             backendCount = 1;
         }
 
-        ma_context_config contextConfig = ma_context_config_init();
-        if (ma_context_init(backends, backendCount, &contextConfig, &context) != MA_SUCCESS) {
+        // ── Bounded asynchronous device open (watchdog) ──
+        // The open must never block this (UI isolate) thread indefinitely:
+        // cheap devices can wedge inside the audio HAL, which would freeze the
+        // app on its splash screen forever. Run it on a worker thread and wait
+        // with a hard deadline.
+        bool expected = false;
+        if (!gAndroidInitBusy.compare_exchange_strong(expected, true,
+                std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            // A previous attempt is still stuck inside the audio HAL: fail fast
+            // so the caller can fall back to a safer configuration instead of
+            // freezing.
+            soloud_platform_log(
+                "miniaudio_init: previous device open still in flight\n");
+            delete[] backendList;
             return UNKNOWN_ERROR;
         }
-        if (ma_device_init(&context, &deviceConfig, &gDevice) != MA_SUCCESS) {
-            ma_context_uninit(&context);
+        gAndroidInitAbandoned.store(false, std::memory_order_release);
+        gAndroidInitWorkerDone.store(false, std::memory_order_release);
+
+        std::thread(
+            android_device_open_worker,
+            aFlags,
+            backendList,
+            backendCount,
+            deviceConfig).detach();
+
+        bool openFinished = false;
+        {
+            std::unique_lock<std::mutex> lk(gAndroidInitMutex);
+            openFinished = gAndroidInitCv.wait_until(
+                lk,
+                std::chrono::steady_clock::now()
+                    + std::chrono::milliseconds(kAndroidDeviceOpenTimeoutMs),
+                [] { return gAndroidInitWorkerDone.load(std::memory_order_acquire); });
+        }
+        if (!openFinished)
+        {
+            // Deadline expired: abandon the attempt. The worker rolls back at
+            // its next checkpoint; teardown paths defer while it is alive.
+            gAndroidInitAbandoned.store(true, std::memory_order_release);
+            soloud_platform_log(
+                "miniaudio_init: device open exceeded %d ms — abandoning\n",
+                kAndroidDeviceOpenTimeoutMs);
             return UNKNOWN_ERROR;
         }
-        gDeviceInitialized = true;
-        aSoloud->postinit_internal(gDevice.sampleRate, gDevice.playback.internalPeriodSizeInFrames, aFlags, gDevice.playback.channels);
-        ma_result startResult = ma_device_start(&gDevice);
-        if (startResult != MA_SUCCESS) {
-            soloud_platform_log("miniaudio_init: ma_device_start failed with error %d\n", startResult);
-            ma_device_uninit(&gDevice);
-            ma_context_uninit(&context);
-            gDeviceInitialized = false;
+        if (!gDeviceInitialized)
+        {
             return UNKNOWN_ERROR;
         }
         gDeviceInitDeferred = false;
@@ -549,6 +738,14 @@ namespace SoLoud
     {
         if (soloud == nullptr)
             return UNKNOWN_ERROR;
+
+#ifdef __ANDROID__
+        // A device-open worker is still in flight: the device it is creating
+        // must not be torn down or raced from here. Fail fast; the Dart layer
+        // retries once the worker settles.
+        if (!gAndroidInitWorkerDone.load(std::memory_order_acquire))
+            return UNKNOWN_ERROR;
+#endif
 
         // Stop the device before uninitializing to ensure clean shutdown
         if (ma_device_get_state(&gDevice) == ma_device_state_started)

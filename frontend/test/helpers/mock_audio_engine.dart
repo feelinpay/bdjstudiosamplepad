@@ -292,6 +292,9 @@ class MockAudioEngine implements AudioEnginePort {
   void setMasterDistortion(double amount) {}
 
   @override
+  void setVisualizationEnabled(bool enabled) {}
+
+  @override
   Float32List? getAudioWave() => null;
 
   @override

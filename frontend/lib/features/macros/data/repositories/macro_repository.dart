@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 import '../models/macro_model.dart';
 import '../../domain/entities/macro_entity.dart';
 

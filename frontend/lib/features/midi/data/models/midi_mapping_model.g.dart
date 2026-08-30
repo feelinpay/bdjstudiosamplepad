@@ -34,6 +34,7 @@ const MidiMappingModelSchema = CollectionSchema(
       type: IsarType.long,
     ),
   },
+
   estimateSize: _midiMappingModelEstimateSize,
   serialize: _midiMappingModelSerialize,
   deserialize: _midiMappingModelDeserialize,
@@ -56,10 +57,11 @@ const MidiMappingModelSchema = CollectionSchema(
   },
   links: {},
   embeddedSchemas: {},
+
   getId: _midiMappingModelGetId,
   getLinks: _midiMappingModelGetLinks,
   attach: _midiMappingModelAttach,
-  version: '3.1.0+1',
+  version: '3.3.2',
 );
 
 int _midiMappingModelEstimateSize(

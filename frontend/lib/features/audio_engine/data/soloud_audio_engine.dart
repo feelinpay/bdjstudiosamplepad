@@ -7,9 +7,22 @@ import '../../../core/audio/audio_output_device.dart';
 import '../../../core/audio/audio_initialization_result.dart';
 import '../../../core/audio/trigger_mode.dart';
 import '../../../core/audio/audio_engine_state.dart';
+import '../../../core/platform/device_tier.dart';
 import '../../../core/services/local_audio_storage_service.dart';
 import '../../../core/utils/lru_cache.dart';
 import '../../../core/utils/audio_log.dart';
+
+/// Configuration for one progressive SoLoud init strategy.
+class _InitAttempt {
+  final bool lowLatency;
+  final int sampleRate;
+  final int bufferSize;
+  const _InitAttempt({
+    required this.lowLatency,
+    this.sampleRate = 44100,
+    this.bufferSize = 2048,
+  });
+}
 
 class SoLoudAudioEngine implements AudioEnginePort {
   SoLoud? _soloud;
@@ -141,7 +154,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
       _loadedSounds.clear();
     }
     _loadedSounds = LruCache<String, AudioSource>(
-      _pendingCacheCapacity ?? 100,
+      _pendingCacheCapacity ?? DeviceTierDetector.soundCacheCapacity,
       onEvict: (id, source) {
         _deferDisposeSource(id, source);
       },
@@ -166,19 +179,82 @@ class SoLoudAudioEngine implements AudioEnginePort {
     }
 
     try {
-      await _soloud!.init();
-      _soloud!.setVisualizationEnabled(true);
+      // Progressive init strategies. The native layer bounds each device open
+      // with its own watchdog (5 s), so these timeouts can actually fire even
+      // if a low-end audio HAL misbehaves. Cheapest/best-latency first,
+      // most-compatible last.
+      final attempts = <_InitAttempt>[
+        const _InitAttempt(lowLatency: true),
+        // Conservative profile avoids the AAudio MMAP path and prefers
+        // OpenSL ES — the most compatible configuration on budget hardware.
+        const _InitAttempt(lowLatency: false),
+        // Some cheap HALs also choke resampling 44.1 kHz: try the native
+        // 48 kHz rate with a larger buffer as a last resort.
+        const _InitAttempt(
+          lowLatency: false,
+          sampleRate: 48000,
+          bufferSize: 4096,
+        ),
+      ];
+      final List<_InitAttempt> plan =
+          Platform.isAndroid ? attempts : attempts.sublist(0, 1);
+
+      Object? lastError;
+      bool opened = false;
+      for (final attempt in plan) {
+        try {
+          await _soloud!
+              .init(
+                sampleRate: attempt.sampleRate,
+                bufferSize: attempt.bufferSize,
+                channels: Channels.stereo,
+                lowLatency: attempt.lowLatency,
+              )
+              .timeout(
+                const Duration(seconds: 8),
+                onTimeout: () => throw TimeoutException(
+                  'SoLoud.init() exceeded 8 s '
+                  '(lowLatency=${attempt.lowLatency}, '
+                  'sr=${attempt.sampleRate}, buf=${attempt.bufferSize})',
+                ),
+              );
+          opened = true;
+          break;
+        } catch (e) {
+          lastError = e;
+          debugPrint('[AudioEngine] init attempt failed '
+              '(lowLatency=${attempt.lowLatency}, sr=${attempt.sampleRate}, '
+              'buf=${attempt.bufferSize}): $e');
+          // Reset any half-open native state before the next strategy.
+          try {
+            if (_soloud!.isInitialized) _soloud!.deinit();
+          } catch (_) {}
+        }
+      }
+      if (!opened) {
+        throw (lastError is Exception)
+            ? lastError
+            : Exception(lastError?.toString() ?? 'audio init failed');
+      }
+      // Visualization is resource-intensive. On low-end devices it stays OFF
+      // by default and is enabled lazily when the user opens the visualizer.
+      // On mid/high devices the behaviour is preserved.
+      _soloud!.setVisualizationEnabled(
+        DeviceTierDetector.enableVisualizationByDefault,
+      );
       _isInitialized = true;
       _engineState = AudioEngineState.ready;
       debugPrint(
-        '[AudioEngine] Engine ready. availableDevices=${devices.length}',
+        '[AudioEngine] Engine ready. availableDevices=${devices.length} '
+        'tier=${DeviceTierDetector.current}',
       );
       _startPolling();
     } catch (e, st) {
       final msg = e.toString();
       debugPrint('[AudioEngine] init() failed: $msg\n$st');
       _isInitialized = true;
-      if (msg.contains('No playback devices were found')) {
+      if (msg.contains('No playback devices were found') ||
+          e is TimeoutException) {
         _engineState = AudioEngineState.noDevice;
       } else {
         _engineState = AudioEngineState.error;
@@ -191,7 +267,9 @@ class SoLoudAudioEngine implements AudioEnginePort {
 
   void _startPolling() {
     if (_pollingTimer != null) return;
-    _pollingTimer = Timer.periodic(const Duration(milliseconds: 25), (timer) {
+    // Adaptive polling: low-end devices use a longer interval to save CPU.
+    final intervalMs = DeviceTierDetector.audioPollingIntervalMs;
+    _pollingTimer = Timer.periodic(Duration(milliseconds: intervalMs), (timer) {
       if (_audioDisabled || _soloud == null || _activeHandles.isEmpty) return;
 
       var idsToCheck = _activeHandles.keys.toList();
@@ -324,10 +402,18 @@ class SoLoudAudioEngine implements AudioEnginePort {
       );
     }
 
-    final selectResult = await _changeDevice(targetDeviceId);
-    if (selectResult != null) {
-      _engineState = AudioEngineState.error;
-      return AudioInitializationResult.error(userMessage: selectResult);
+    // Mobile exposes a single OS-managed output: re-opening the very same
+    // default device would stop/restart the stream for nothing (and add one
+    // more device-open that can wedge on cheap hardware).
+    final needsDeviceSwitch =
+        !(Platform.isAndroid || Platform.isIOS) ||
+        targetDeviceId != defaultDevice.id;
+    if (needsDeviceSwitch) {
+      final selectResult = await _changeDevice(targetDeviceId);
+      if (selectResult != null) {
+        _engineState = AudioEngineState.error;
+        return AudioInitializationResult.error(userMessage: selectResult);
+      }
     }
 
     return AudioInitializationResult(
@@ -406,6 +492,19 @@ class SoLoudAudioEngine implements AudioEnginePort {
           devices
               .firstWhere((d) => d.isDefault, orElse: () => devices.first)
               .id;
+
+      final defaultDevice = devices.firstWhere(
+        (d) => d.isDefault,
+        orElse: () => devices.first,
+      );
+      final isMobileSingleOutput =
+          Platform.isAndroid || Platform.isIOS;
+      if (isMobileSingleOutput && safeDeviceId == defaultDevice.id) {
+        // Already on the only OS-managed output; reopening it would just
+        // restart the stream.
+        _engineState = AudioEngineState.ready;
+        return;
+      }
 
       final errorMsg = _changeDevice(safeDeviceId);
       if (errorMsg != null) {
@@ -1038,6 +1137,14 @@ class SoLoudAudioEngine implements AudioEnginePort {
           _soloud!.filters.lofiFilter.deactivate();
         }
       }
+    } catch (_) {}
+  }
+
+  @override
+  void setVisualizationEnabled(bool enabled) {
+    if (_audioDisabled || _soloud == null) return;
+    try {
+      _soloud!.setVisualizationEnabled(enabled);
     } catch (_) {}
   }
 

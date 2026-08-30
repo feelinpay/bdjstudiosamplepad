@@ -25,6 +25,7 @@ const GenreModelSchema = CollectionSchema(
     ),
     r'name': PropertySchema(id: 2, name: r'name', type: IsarType.string),
   },
+
   estimateSize: _genreModelEstimateSize,
   serialize: _genreModelSerialize,
   deserialize: _genreModelDeserialize,
@@ -47,10 +48,11 @@ const GenreModelSchema = CollectionSchema(
   },
   links: {},
   embeddedSchemas: {},
+
   getId: _genreModelGetId,
   getLinks: _genreModelGetLinks,
   attach: _genreModelAttach,
-  version: '3.1.0+1',
+  version: '3.3.2',
 );
 
 int _genreModelEstimateSize(

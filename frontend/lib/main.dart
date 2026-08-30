@@ -8,9 +8,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'core/providers/core_providers.dart';
+import 'core/providers/database_provider.dart';
 import 'core/providers/audio_providers.dart';
 import 'core/services/filesystem_sync_service.dart';
 import 'core/services/app_storage_service.dart';
+import 'core/platform/device_tier.dart';
+import 'core/platform/storage_permission_gate.dart';
 import 'features/audio_engine/data/soloud_audio_engine.dart';
 import 'core/audio/audio_initialization_result.dart';
 import 'core/theme/app_theme.dart';
@@ -52,6 +55,10 @@ class _AppServices {
 /// (audio, settings, prefs) ocurre en segundo plano y EN PARALELO. Evita el
 /// "lag" de apertura en equipos de baja gama, sin usar el motor de audio antes
 /// de estar listo (los pads solo aparecen cuando todo termino de cargar).
+///
+/// v2: Inicialización progresiva con feedback visual paso-a-paso, operaciones
+/// en paralelo, timeouts de seguridad y detección automática de gama del
+/// dispositivo para ajustar presupuestos de recursos.
 class _BootstrapApp extends StatefulWidget {
   const _BootstrapApp();
 
@@ -61,7 +68,9 @@ class _BootstrapApp extends StatefulWidget {
 
 class _BootstrapAppState extends State<_BootstrapApp> {
   static const _installationMarker = 'bdj_sample_pad_installation_v1';
+
   Future<_AppServices>? _bootstrap;
+  String _statusText = 'Preparando...';
 
   @override
   void initState() {
@@ -69,72 +78,140 @@ class _BootstrapAppState extends State<_BootstrapApp> {
     _bootstrap = _initialize();
   }
 
-  Future<_AppServices> _initialize() async {
-    await AppStorageService.initialize();
-    // Un respaldo pendiente incompleto nunca debe impedir que la aplicación
-    // abra, especialmente tras una actualización o en almacenamiento lento.
-    try {
-      await ConfigBackupService.applyPendingRestore();
-    } catch (e) {
-      debugPrint('Error en applyPendingRestore: $e');
+  void _updateStatus(String text) {
+    if (mounted) {
+      setState(() => _statusText = text);
     }
+  }
+
+  /// Limpia secretos residuales del Keychain en la primera instalación.
+  /// Las 10 operaciones corren en paralelo en vez de secuencialmente.
+  ///
+  /// Con presupuesto de tiempo: en equipos de gama baja el Keystore de Android
+  /// puede tardar varios segundos en su primer acceso y, si está corrupto,
+  /// llegar a bloquearse. El marcador se escribe igual para no repetir el
+  /// intento en cada arranque.
+  Future<void> _cleanKeychainIfNeeded(SharedPreferences prefs) async {
+    if (prefs.containsKey(_installationMarker)) return;
+    try {
+      const storage = FlutterSecureStorage();
+      const keys = [
+        'spp_license_key',
+        'spp_license_status',
+        'spp_access_token',
+        'spp_refresh_token',
+        'spp_token_expires_at',
+        'spp_last_sync_at',
+        'spp_device_id',
+        'spp_hardware_fingerprint',
+        'spp_last_license_check_utc',
+        'spp_install_id',
+      ];
+      await Future.wait(keys.map((k) => storage.delete(key: k))).timeout(
+        const Duration(seconds: 6),
+        onTimeout: () => const <void>[],
+      );
+      await prefs.setBool(_installationMarker, true);
+    } catch (e) {
+      debugPrint('Error en Secure Storage inicial: $e');
+    }
+  }
+
+  /// Inicializa el motor de audio con timeout de protección.
+  ///
+  /// El presupuesto externo (30 s) cubre el peor caso de las estrategias
+  /// progresivas internas del motor (3 intentos × watchdog nativo de 5 s +
+  /// limpiezas), de modo que el motor siempre alcanza un estado terminal
+  /// (`noDevice`/`error`) y la UI muestra su overlay con botón de reintento en
+  /// vez de quedarse en "Inicializando..." sin salida.
+  Future<AudioInitializationResult> _initAudioSafe(
+    SoLoudAudioEngine audioEngine,
+    int? savedDeviceId,
+  ) async {
+    try {
+      return await audioEngine
+          .initializeAndRestoreDevice(savedDeviceId)
+          .timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          debugPrint('[Bootstrap] Audio init timeout after 30 s');
+          return const AudioInitializationResult.noDevice(
+            userMessage:
+                'El motor de audio tardó demasiado en responder. '
+                'Los pads funcionarán cuando el audio esté disponible.',
+          );
+        },
+      );
+    } catch (e, st) {
+      debugPrint('Error inicializando motor de audio: $e\n$st');
+      return const AudioInitializationResult.error(
+        userMessage: 'Error al inicializar el motor de audio',
+      );
+    }
+  }
+
+  Future<_AppServices> _initialize() async {
+    // ── Fase 1: Almacenamiento + Preferencias + Detección de gama ─────────
+    // Estas tres operaciones son independientes y corren en paralelo.
+    // Cada una con presupuesto propio: en gama baja la E/S flash fría puede
+    // tardar; ninguna debe poder colgar el arranque por sí sola.
+    _updateStatus('Preparando almacenamiento...');
+    final phase1 = await Future.wait([
+      AppStorageService.initialize() // [0] void
+          .timeout(const Duration(seconds: 10), onTimeout: () {
+        debugPrint('[Bootstrap] storage init timed out — continuing');
+      }),
+      SharedPreferences.getInstance(), // [1] SharedPreferences
+      DeviceTierDetector.detect(), // [2] DeviceTier
+    ]);
+    final prefs = phase1[1] as SharedPreferences;
+    final tier = phase1[2] as DeviceTier;
+    debugPrint('[Bootstrap] Phase 1 done — tier=$tier');
+
+    // ── Fase 2: Restauración pendiente + Keychain cleanup ────────────────
+    // Ambas son operaciones de I/O independientes con timeout de protección.
+    _updateStatus('Verificando configuración...');
+    await Future.wait([
+      ConfigBackupService.applyPendingRestore()
+          .timeout(const Duration(seconds: 5), onTimeout: () {
+        debugPrint('[Bootstrap] applyPendingRestore timed out — skipping');
+      }).catchError((e) {
+        debugPrint('Error en applyPendingRestore: $e');
+      }),
+      _cleanKeychainIfNeeded(prefs),
+    ]);
 
     try {
       GestureBinding.instance.resamplingEnabled = false;
     } catch (_) {}
 
+    // ── Fase 2.5: Biblioteca (base de datos) ─────────────────────────────
+    // La base es una dependencia dura: si no abre, no hay nada que mostrar.
+    // Se abre aqui, y no de forma perezosa en el primer consumidor, porque los
+    // consumidores absorben el error y dejaban la app girando sobre el logo sin
+    // salida. Abriendola en el arranque el fallo llega a `_StartupScreen`, con
+    // mensaje concreto y boton de reintentar. El presupuesto convierte ademas un
+    // cuelgue en un error visible.
+    _updateStatus('Abriendo biblioteca...');
+    await openAppDatabase().timeout(
+      const Duration(seconds: 40),
+      onTimeout: () => throw TimeoutException(
+        'La biblioteca local tardo demasiado en abrir.',
+      ),
+    );
+    debugPrint('[Bootstrap] Base de datos lista');
+
+    // ── Fase 3: Motor de audio ───────────────────────────────────────────
+    _updateStatus('Iniciando motor de audio...');
     final audioEngine = SoLoudAudioEngine();
-
-    // Las preferencias son ligeras y necesarias para construir la interfaz.
-    // El motor nativo se prepara después, sin retener la primera pantalla.
-    final prefs = await SharedPreferences.getInstance();
-
-    // iOS/macOS conserva el Keychain tras desinstalar una app. El marcador vive en
-    // el sandbox de la app; si falta, eliminamos cualquier secreto residual.
-    if (!prefs.containsKey(_installationMarker)) {
-      try {
-        const storage = FlutterSecureStorage();
-        for (final key in const [
-          'spp_license_key',
-          'spp_license_status',
-          'spp_access_token',
-          'spp_refresh_token',
-          'spp_token_expires_at',
-          'spp_last_sync_at',
-          'spp_device_id',
-          'spp_hardware_fingerprint',
-          'spp_last_license_check_utc',
-          'spp_install_id',
-        ]) {
-          await storage.delete(key: key);
-        }
-        await prefs.setBool(_installationMarker, true);
-      } catch (e) {
-        debugPrint('Error en Secure Storage inicial: $e');
-      }
-    }
-
-    // SettingsService reutiliza la instancia ya cargada (sin doble fetch).
     final settingsService = SettingsService.withPrefs(prefs);
     audioEngine.setSoundCacheCapacity(settingsService.soundCacheCapacity);
 
-    // Inicializar el motor de audio y restaurar el dispositivo guardado.
-    // Await bloquea el splash hasta que el motor esté ready (o haya fallado),
-    // de modo que la UI observa un estado coherente vía audioInitializationProvider.
     final savedDeviceId = settingsService.audioOutputDeviceId;
-    AudioInitializationResult audioInitResult;
-    try {
-      audioInitResult = await audioEngine.initializeAndRestoreDevice(
-        savedDeviceId,
-      );
-    } catch (e, st) {
-      debugPrint('Error inicializando motor de audio: $e\n$st');
-      audioInitResult = const AudioInitializationResult.error(
-        userMessage: 'Error al inicializar el motor de audio',
-      );
-    }
+    final audioInitResult = await _initAudioSafe(audioEngine, savedDeviceId);
 
-    // Rotacion automatica libre: respeta como gira el usuario su dispositivo.
+    // ── Fase 4: Configuración de plataforma ──────────────────────────────
+    // Rotación libre + barra de estado transparente en móvil.
     if (Platform.isAndroid || Platform.isIOS) {
       try {
         SystemChrome.setPreferredOrientations(const [
@@ -154,6 +231,7 @@ class _BootstrapAppState extends State<_BootstrapApp> {
       }
     }
 
+    _updateStatus('¡Listo!');
     return _AppServices(
       settingsService,
       audioEngine,
@@ -165,9 +243,9 @@ class _BootstrapAppState extends State<_BootstrapApp> {
   @override
   Widget build(BuildContext context) {
     if (_bootstrap == null) {
-      return const MaterialApp(
+      return MaterialApp(
         debugShowCheckedModeBanner: false,
-        home: _StartupScreen(),
+        home: _StartupScreen(statusText: _statusText),
       );
     }
 
@@ -179,9 +257,11 @@ class _BootstrapAppState extends State<_BootstrapApp> {
           return MaterialApp(
             debugShowCheckedModeBanner: false,
             home: _StartupScreen(
+              statusText: _statusText,
               error:
-                  'No se pudo cargar la configuración local.\n\nDetalle: $detail\n\nReinicia la aplicación o presiona reintentar.',
+                  'No se pudo iniciar la aplicación.\n\nDetalle: $detail\n\nReinicia la aplicación o presiona reintentar.',
               onRetry: () {
+                _statusText = 'Reintentando...';
                 final future = _initialize();
                 setState(() {
                   _bootstrap = future;
@@ -191,9 +271,9 @@ class _BootstrapAppState extends State<_BootstrapApp> {
           );
         }
         if (!snapshot.hasData) {
-          return const MaterialApp(
+          return MaterialApp(
             debugShowCheckedModeBanner: false,
-            home: _StartupScreen(),
+            home: _StartupScreen(statusText: _statusText),
           );
         }
         final services = snapshot.data!;
@@ -217,8 +297,9 @@ class _BootstrapAppState extends State<_BootstrapApp> {
 }
 
 class _StartupScreen extends StatelessWidget {
-  const _StartupScreen({this.error, this.onRetry});
+  const _StartupScreen({this.statusText = 'Preparando...', this.error, this.onRetry});
 
+  final String statusText;
   final String? error;
   final VoidCallback? onRetry;
 
@@ -229,14 +310,14 @@ class _StartupScreen extends StatelessWidget {
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: error == null
-            ? const Column(
+            ? Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircularProgressIndicator(color: Colors.deepPurpleAccent),
-                  SizedBox(height: 16),
+                  const CircularProgressIndicator(color: Colors.deepPurpleAccent),
+                  const SizedBox(height: 16),
                   Text(
-                    'Verificando recursos...',
-                    style: TextStyle(
+                    statusText,
+                    style: const TextStyle(
                       color: Colors.white70,
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
@@ -333,8 +414,15 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
         },
       ),
       routes: {'/main': (_) => const MainPadPage()},
-      home: _buildLicenseGate(licenseState),
+      home: _buildHome(licenseState),
     );
+  }
+
+  /// Portón OBLIGATORIO de permisos de almacenamiento (solo Android): se
+  /// muestra antes que cualquier otra pantalla y bloquea la app hasta
+  /// conceder el acceso. En escritorio/iOS entrega el flujo normal.
+  Widget _buildHome(LicenseState licenseState) {
+    return StoragePermissionGate(child: _buildLicenseGate(licenseState));
   }
 
   Widget _buildLicenseGate(LicenseState licenseState) {
