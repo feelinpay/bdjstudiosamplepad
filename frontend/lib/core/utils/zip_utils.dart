@@ -30,3 +30,22 @@ Future<void> zipDirectoryInIsolate(ZipHelperArgs args) async {
 Archive decodeZipInIsolate(Uint8List bytes) {
   return ZipDecoder().decodeBytes(bytes);
 }
+
+class ExtractZipArgs {
+  final String zipPath;
+  final String targetDir;
+  ExtractZipArgs({
+    required this.zipPath,
+    required this.targetDir,
+  });
+}
+
+Future<void> extractZipInIsolate(ExtractZipArgs args) async {
+  final inputStream = InputFileStream(args.zipPath);
+  try {
+    final archive = ZipDecoder().decodeStream(inputStream);
+    await extractArchiveToDisk(archive, args.targetDir);
+  } finally {
+    await inputStream.close();
+  }
+}

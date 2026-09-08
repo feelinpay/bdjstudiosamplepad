@@ -48,3 +48,15 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+
+; Política del producto (compartida con las demás apps BDJ Studio): los datos
+; NO sobreviven a la desinstalación. Se borra la carpeta de soporte de la app
+; --%APPDATA%\CompanyName\ProductName, la misma que devuelve
+; getApplicationSupportDirectory() (Runner.rc)-- incluidos Database, ajustes,
+; shared_preferences.json y el almacén cifrado (flutter_secure_storage.dat), y
+; los nombres que usaban versiones antiguas.
+[UninstallDelete]
+Type: filesandordirs; Name: "{userappdata}\BDJ Studio\BDJ Studio Sample Pad"
+Type: filesandordirs; Name: "{userappdata}\BDJ Studio\bdj_studio_sample_pad"
+Type: filesandordirs; Name: "{userappdata}\BDJ Studio Sample Pad"
+Type: filesandordirs; Name: "{userappdata}\bdj_studio_sample_pad"

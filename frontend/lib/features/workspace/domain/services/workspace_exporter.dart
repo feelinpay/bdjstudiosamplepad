@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:isar_community/isar.dart';
 import '../../data/models/workspace_model.dart';
@@ -17,6 +18,8 @@ class WorkspaceExporter {
 
   WorkspaceExporter(this.dbFuture);
 
+  /// Exporta el workspace a un archivo temporal y devuelve su ruta.
+  /// Mantiene compatibilidad total con llamadas y tests existentes.
   Future<String?> exportWorkspace(int workspaceId) async {
     var isar = await dbFuture;
     var workspace = await isar.workspaceModels.get(workspaceId);
@@ -24,7 +27,7 @@ class WorkspaceExporter {
 
     final work = await AppStorageService.workDirectory('workspace_export');
     var mediaDir = Directory('${work.path}/media');
-    await mediaDir.create();
+    await mediaDir.create(recursive: true);
     var exportPath = '${work.path}/export.sppworkspace';
 
     var pages = await isar.pageModels
@@ -35,7 +38,7 @@ class WorkspaceExporter {
     pages.sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
 
     // Validar consistencia de la jerarquía antes de tocar disco: todo
-    // parentPageId referenciado debe existir. Si hay páginas/folder huérfagas
+    // parentPageId referenciado debe existir. Si hay páginas/folder huérfanas
     // el workspace está corrupto y no se anuncia éxito (retorna null).
     for (final page in pages) {
       if (page.parentPageId != null &&
@@ -73,6 +76,23 @@ class WorkspaceExporter {
             }
           }
         }
+
+        String? imageName;
+        if (pad.backgroundImagePath != null && pad.backgroundImagePath!.isNotEmpty) {
+          final resolved = await LocalAudioStorageService.resolvePath(
+            pad.backgroundImagePath!,
+          );
+          var src = File(resolved);
+          if (await src.exists()) {
+            imageName = mediaSeen[pad.backgroundImagePath!];
+            if (imageName == null) {
+              imageName = 'img_${mediaSeen.length}_${src.uri.pathSegments.last}';
+              await src.copy('${mediaDir.path}/$imageName');
+              mediaSeen[pad.backgroundImagePath!] = imageName;
+            }
+          }
+        }
+
         padsMeta.add({
           'pageIndex': page.pageIndex,
           'padId': pad.padId,
@@ -85,20 +105,23 @@ class WorkspaceExporter {
           'chokeGroup': pad.chokeGroup,
           'pan': pad.pan,
           'pitch': pad.pitch,
+          'volume': pad.volume,
           'isProtected': pad.isProtected,
           'reverse': pad.reverse,
           'media': mediaName,
+          'image': imageName,
           'fadeInMs': pad.fadeInMs,
           'fadeOutMs': pad.fadeOutMs,
           'startPointMs': pad.startPointMs,
           'endPointMs': pad.endPointMs,
           'loopPointMs': pad.loopPointMs,
-          'backgroundImagePath': pad.backgroundImagePath,
         });
       }
     }
 
     var metadata = {
+      'format': 'bdj-studio-sample-pad-workspace',
+      'version': 1,
       'workspace': {'name': workspace.name},
       'pages': pages
           .map(
@@ -130,5 +153,44 @@ class WorkspaceExporter {
       ),
     );
     return exportPath;
+  }
+
+  /// Exporta el workspace solicitando la ruta de guardado al usuario
+  /// mediante [FilePicker.saveFile]. Retorna la ruta final elegida o null si cancela.
+  Future<String?> exportWorkspaceWithPicker({required int workspaceId}) async {
+    final isar = await dbFuture;
+    final workspace = await isar.workspaceModels.get(workspaceId);
+    if (workspace == null) return null;
+
+    final sanitizedName = workspace.name
+        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
+        .replaceAll(' ', '_');
+
+    final output = await FilePicker.saveFile(
+      dialogTitle: 'Exportar workspace',
+      fileName: '$sanitizedName.sppworkspace',
+      type: FileType.custom,
+      allowedExtensions: const ['sppworkspace'],
+    );
+    if (output == null) return null;
+
+    final finalOutput = output.toLowerCase().endsWith('.sppworkspace')
+        ? output
+        : '$output.sppworkspace';
+
+    final tempExportPath = await exportWorkspace(workspaceId);
+    if (tempExportPath == null) return null;
+
+    final tempFile = File(tempExportPath);
+    await tempFile.copy(finalOutput);
+    try {
+      await tempFile.delete();
+      final parentDir = tempFile.parent;
+      if (await parentDir.exists()) {
+        await parentDir.delete(recursive: true);
+      }
+    } catch (_) {}
+
+    return finalOutput;
   }
 }

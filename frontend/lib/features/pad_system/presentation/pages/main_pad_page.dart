@@ -430,12 +430,20 @@ class _ExplorerBody extends ConsumerWidget {
                 await _createWorkspace(context, ref);
                 return;
               }
+              if (value == 'import_workspace_file') {
+                await _importWorkspaceFile(context, ref);
+                return;
+              }
               if (value == 'import') {
                 await _importWorkspace(context, ref);
                 return;
               }
               var ws = await ref.read(currentWorkspaceProvider.future);
               if (ws == null) return;
+              if (value == 'export_workspace') {
+                await _exportWorkspace(context, ref, ws);
+                return;
+              }
               var repo = ref.read(workspaceRepositoryProvider);
               if (value == 'duplicate') {
                 var copy = await repo.duplicateWorkspace(ws.id);
@@ -495,9 +503,23 @@ class _ExplorerBody extends ConsumerWidget {
                 ),
               ),
               const PopupMenuItem(
+                value: 'export_workspace',
+                child: Text(
+                  'Exportar workspace (.sppworkspace)',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'import_workspace_file',
+                child: Text(
+                  'Importar workspace (.sppworkspace)',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+              const PopupMenuItem(
                 value: 'import',
                 child: Text(
-                  'Importar workspace',
+                  'Importar desde carpeta',
                   style: TextStyle(color: Colors.white),
                 ),
               ),
@@ -631,6 +653,119 @@ class _ExplorerBody extends ConsumerWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(duration: const Duration(seconds: 2), content: Text('No se pudo crear el workspace: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _exportWorkspace(
+    BuildContext context,
+    WidgetRef ref,
+    WorkspaceModel ws,
+  ) async {
+    try {
+      if (Platform.isAndroid) {
+        await PadAddActions.ensureAndroidStorageAccess(context);
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      }
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 2),
+            content: Text('Exportando workspace "${ws.name}"...'),
+          ),
+        );
+      }
+
+      final exporter = ref.read(workspaceExporterProvider);
+      final path = await exporter.exportWorkspaceWithPicker(workspaceId: ws.id);
+
+      if (!context.mounted) return;
+      if (path != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 3),
+            content: Text('Workspace exportado correctamente:\n$path'),
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 3),
+            content: Text('Error al exportar workspace: $error'),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _importWorkspaceFile(BuildContext context, WidgetRef ref) async {
+    try {
+      if (Platform.isAndroid) {
+        await PadAddActions.ensureAndroidStorageAccess(context);
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      }
+
+      final result = await FilePicker.pickFiles(
+        dialogTitle: 'Seleccionar archivo de workspace',
+        type: FileType.custom,
+        allowedExtensions: const ['sppworkspace', 'zip'],
+      );
+
+      if (result == null || result.files.isEmpty) return;
+      final filePath = result.files.single.path;
+      if (filePath == null || filePath.isEmpty) return;
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(seconds: 2),
+            content: Text('Importando workspace... Por favor espere.'),
+          ),
+        );
+      }
+
+      final importer = ref.read(workspaceZipImporterProvider);
+      final importedWorkspace = await importer.importFromZipFile(filePath);
+
+      if (!context.mounted) return;
+      if (importedWorkspace == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(seconds: 3),
+            content: Text(
+              'No se pudo importar el archivo .sppworkspace. '
+              'Verifique que el archivo sea válido.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      ref.invalidate(workspaceListProvider);
+      ref.invalidate(currentWorkspaceProvider);
+      final wsId = importedWorkspace.id;
+      await switchWorkspaceWithRequestId(ref, wsId);
+      ref.invalidate(padPageProvider);
+      ref.read(currentPageIndexProvider.notifier).state = 0;
+      ref.read(folderBackStackProvider.notifier).state = <int>[];
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 2),
+          content: Text('Workspace "${importedWorkspace.name}" importado.'),
+        ),
+      );
+    } on Object catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 3),
+            content: Text('Error al importar el workspace: $error'),
+          ),
         );
       }
     }

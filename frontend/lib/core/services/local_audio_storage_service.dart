@@ -353,6 +353,9 @@ class LocalAudioStorageService {
       final entities = await audiosDir.list(recursive: true).toList();
       for (final entity in entities) {
         if (entity is File) {
+          final ext = p.extension(entity.path).toLowerCase();
+          // Solo barrer archivos de audio; los demás (imágenes, etc.) se preservan.
+          if (!supportedAudioExtensions.contains(ext)) continue;
           final relativePath = p
               .relative(entity.path, from: audiosDir.path)
               .replaceAll('\\', '/');
@@ -394,12 +397,13 @@ class LocalAudioStorageService {
   }
 
   /// Ejecuta la limpieza de archivos huérfanos en disco comparando contra todos los pads activos de Isar.
+  /// Incluye tanto samplePath como backgroundImagePath para no borrar imágenes de pads.
   static Future<int> autoCleanOrphans(Isar isar) async {
     final allPads = await isar.padModels.where().findAll();
-    final activePaths = allPads
-        .map((p) => p.samplePath)
-        .whereType<String>()
-        .toList();
+    final activePaths = <String>[
+      ...allPads.map((p) => p.samplePath).whereType<String>(),
+      ...allPads.map((p) => p.backgroundImagePath).whereType<String>(),
+    ];
     return await cleanUnusedAudioFiles(activePaths);
   }
 

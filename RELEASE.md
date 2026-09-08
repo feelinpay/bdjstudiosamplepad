@@ -163,6 +163,21 @@ Esto vale para uso personal. Si algún día la app se reparte a otras personas,
 cada una tendría que ejecutar ese comando a mano — que es justo el momento en
 que la suscripción empieza a tener sentido, y no antes.
 
+### Desinstalación
+
+macOS no tiene desinstalador: arrastrar la app a la Papelera **no borra los
+datos**, que quedan en `~/Library/Application Support`. La política del
+producto es que nada sobreviva a la desinstalación, así que antes de borrar la
+app (o después), se ejecuta:
+
+```bash
+bash tools/macos/uninstall.sh
+```
+
+Borra la app de `/Applications` y toda su carpeta de datos (base de datos,
+ajustes, almacén cifrado, cachés y preferencias). Con `--sin-app` solo limpia
+los datos y deja la app instalada.
+
 ### Secretos
 
 Ninguno para firmar. El único secreto que necesita el repositorio es
