@@ -63,12 +63,8 @@ android {
                 )
                 signingConfigs.getByName("debug")
             }
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
@@ -96,23 +92,13 @@ val copyReleaseApkToDistribution = tasks.register<Copy>("copyReleaseApkToDistrib
     val versionName = flutter.versionName ?: "0.0.0"
 
     from(layout.buildDirectory.dir("outputs/apk/release")) {
-        include("*.apk")
+        include("app-release.apk")
     }
     into(distributionDir)
 
-    // app-release.apk            -> BDJ_Studio_Sample_Pad_1.0.3.apk
-    // app-arm64-v8a-release.apk  -> BDJ_Studio_Sample_Pad_1.0.3_arm64-v8a.apk
+    // app-release.apk -> BDJ_Studio_Sample_Pad_1.0.3.apk
     rename { original ->
-        val abi = original
-            .removeSuffix(".apk")
-            .removePrefix("app-")
-            .removeSuffix("release")
-            .trim('-')
-        if (abi.isEmpty()) {
-            "${distributionAppName}_$versionName.apk"
-        } else {
-            "${distributionAppName}_${versionName}_$abi.apk"
-        }
+        "${distributionAppName}_$versionName.apk"
     }
 
     doFirst {

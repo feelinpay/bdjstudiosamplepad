@@ -26,15 +26,21 @@ import 'features/settings/presentation/providers/settings_provider.dart';
 import 'features/desktop/data/key_binding_service.dart';
 import 'features/desktop/presentation/providers/desktop_providers.dart';
 import 'l10n/app_localizations.dart';
+import 'core/services/crash_log_service.dart';
 import 'core/security/keychain_ci_smoke.dart';
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  if (const bool.fromEnvironment('BDJ_KEYCHAIN_CI_SMOKE', defaultValue: false)) {
-    runKeychainCiSmokeTest();
-    return;
-  }
-  runApp(const _BootstrapApp());
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    if (const bool.fromEnvironment('BDJ_KEYCHAIN_CI_SMOKE', defaultValue: false)) {
+      runKeychainCiSmokeTest();
+      return;
+    }
+    await CrashLogService.initialize();
+    runApp(const _BootstrapApp());
+  }, (error, stack) {
+    CrashLogService.recordPlatformError(error, stack);
+  });
 }
 
 /// Servicios ya inicializados que se inyectan en los providers.
@@ -193,13 +199,33 @@ class _BootstrapAppState extends State<_BootstrapApp> {
     // mensaje concreto y boton de reintentar. El presupuesto convierte ademas un
     // cuelgue en un error visible.
     _updateStatus('Abriendo biblioteca...');
-    await openAppDatabase().timeout(
-      const Duration(seconds: 40),
-      onTimeout: () => throw TimeoutException(
-        'La biblioteca local tardo demasiado en abrir.',
-      ),
-    );
-    debugPrint('[Bootstrap] Base de datos lista');
+    try {
+      await openAppDatabase().timeout(
+        const Duration(seconds: 40),
+        onTimeout: () => throw TimeoutException(
+          'La biblioteca local tardo demasiado en abrir.',
+        ),
+      );
+      await ConfigBackupService.cleanupBeforeRestoreBackup();
+      debugPrint('[Bootstrap] Base de datos lista');
+    } catch (e) {
+      debugPrint('[Bootstrap] Error al abrir biblioteca: $e');
+      final rolledBack = await ConfigBackupService.rollbackFailedRestore();
+      if (rolledBack) {
+        debugPrint('[Bootstrap] Rollback ejecutado. Reintentando abrir base de datos original...');
+        _updateStatus('Restaurando proyecto anterior...');
+        await openAppDatabase().timeout(
+          const Duration(seconds: 40),
+          onTimeout: () => throw TimeoutException(
+            'La biblioteca previa tardo demasiado en abrir.',
+          ),
+        );
+        await ConfigBackupService.cleanupBeforeRestoreBackup();
+        debugPrint('[Bootstrap] Base de datos original reabierta con éxito');
+      } else {
+        rethrow;
+      }
+    }
 
     // ── Fase 3: Motor de audio ───────────────────────────────────────────
     _updateStatus('Iniciando motor de audio...');
@@ -305,51 +331,142 @@ class _StartupScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFF0D0D0D),
-    body: Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: error == null
-            ? Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const CircularProgressIndicator(color: Colors.deepPurpleAccent),
-                  const SizedBox(height: 16),
-                  Text(
-                    statusText,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
+    backgroundColor: const Color(0xFF151522),
+    body: SafeArea(
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(28),
+          child: error == null
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(22),
+                      child: Image.asset(
+                        'assets/icon/logo.png',
+                        width: 104,
+                        height: 104,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const Icon(
+                          Icons.library_music_rounded,
+                          color: Colors.deepPurpleAccent,
+                          size: 80,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
-              )
-            : Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.audiotrack,
-                    color: Colors.deepPurpleAccent,
-                    size: 48,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    error!,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
-                  const SizedBox(height: 20),
-                  FilledButton(
-                    onPressed: onRetry,
-                    child: const Text('Reintentar'),
-                  ),
-                ],
-              ),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'BDJ STUDIO',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 2.0,
+                      ),
+                    ),
+                    const Text(
+                      'SAMPLE PAD',
+                      style: TextStyle(
+                        color: Colors.cyanAccent,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 2.5,
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    const CircularProgressIndicator(
+                      color: Colors.deepPurpleAccent,
+                      strokeWidth: 3.5,
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      statusText,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                )
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.error_outline_rounded,
+                      color: Colors.redAccent,
+                      size: 56,
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'No se pudo iniciar la aplicación',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 19,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.black26,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.white12),
+                      ),
+                      child: Text(
+                        error!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.white70, fontSize: 13),
+                        maxLines: 6,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      alignment: WrapAlignment.center,
+                      children: [
+                        FilledButton.icon(
+                          onPressed: onRetry,
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('Reintentar'),
+                        ),
+                        OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white70,
+                            side: const BorderSide(color: Colors.white24),
+                          ),
+                          onPressed: () async {
+                            final report = await CrashLogService.generateDiagnosticReport();
+                            await Clipboard.setData(ClipboardData(text: report));
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Diagnóstico copiado al portapapeles.'),
+                                  backgroundColor: Colors.deepPurpleAccent,
+                                ),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.copy_rounded, size: 16),
+                          label: const Text('Copiar diagnóstico'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+        ),
       ),
     ),
   );
 }
+
+final GlobalKey<ScaffoldMessengerState> rootScaffoldMessengerKey =
+    GlobalKey<ScaffoldMessengerState>();
 
 class SamplePadProApp extends ConsumerStatefulWidget {
   const SamplePadProApp({super.key});
@@ -364,6 +481,26 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (ConfigBackupService.lastRestoreRolledBack) {
+        ConfigBackupService.lastRestoreRolledBack = false;
+        rootScaffoldMessengerKey.currentState?.showSnackBar(
+          const SnackBar(
+            duration: Duration(seconds: 7),
+            backgroundColor: Color(0xFFE65100),
+            content: Text(
+              'El respaldo no se pudo aplicar. Tu proyecto anterior sigue intacto.',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        );
+      }
+    });
   }
 
   @override
@@ -387,6 +524,7 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
     var settingsState = ref.watch(settingsProvider.select((s) => s.fontScale));
 
     return MaterialApp(
+      scaffoldMessengerKey: rootScaffoldMessengerKey,
       title: 'BDJ Studio Sample Pad',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
@@ -418,9 +556,9 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
     );
   }
 
-  /// Portón OBLIGATORIO de permisos de almacenamiento (solo Android): se
-  /// muestra antes que cualquier otra pantalla y bloquea la app hasta
-  /// conceder el acceso. En escritorio/iOS entrega el flujo normal.
+  /// Portón informativo de permisos de audio (solo Android): solicita
+  /// acceso para importar audios del dispositivo, pero no bloquea el uso de la app.
+  /// En escritorio/iOS entrega el flujo normal directamente.
   Widget _buildHome(LicenseState licenseState) {
     return StoragePermissionGate(child: _buildLicenseGate(licenseState));
   }

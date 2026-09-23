@@ -10,6 +10,7 @@ import '../../../workspace/data/models/page_model.dart';
 import '../../data/models/pad_model.dart';
 import '../../domain/entities/pad_entity.dart';
 import '../../../../core/utils/concurrency_shield.dart';
+import '../../../../core/widgets/blocking_progress_dialog.dart';
 import '../providers/pad_providers.dart';
 
 /// Servicio centralizado de acciones de eliminación (Menú del botón [-]):
@@ -263,41 +264,49 @@ class PadDeleteActions {
     );
 
     if (ok == true) {
-      var isar = await ref.read(isarProvider.future);
-      var page = await isar.pageModels
-          .filter()
-          .pageIndexEqualTo(folderPageIndex)
-          .findFirst();
+      await ConcurrencyShield.run('delete_folder_$folderPageIndex', () async {
+        await BlockingProgressDialog.run(
+          context,
+          title: 'Eliminando carpeta...',
+          initialMessage: 'Limpiando contenidos y optimizando almacenamiento...',
+          task: (_) async {
+            var isar = await ref.read(isarProvider.future);
+            var page = await isar.pageModels
+                .filter()
+                .pageIndexEqualTo(folderPageIndex)
+                .findFirst();
 
-      if (page == null) return;
+            if (page == null) return;
 
-      // Encontrar el pad carpeta que apunta a esta página
-      var repo = ref.read(workspaceRepositoryProvider);
-      final referencingPads = await isar.padModels
-          .filter()
-          .targetPageIndexEqualTo(page.pageIndex)
-          .findFirst();
-      if (referencingPads != null) {
-        await referencingPads.page.load();
-        final refPage = referencingPads.page.value;
-        if (refPage != null) {
-          await ref
-              .read(padPageProvider(refPage.pageIndex).notifier)
-              .deletePad(referencingPads.id.toString());
-        } else {
-          await repo.deletePage(page.id);
-        }
-      } else {
-        await repo.deletePage(page.id);
-      }
+            // Encontrar el pad carpeta que apunta a esta página
+            var repo = ref.read(workspaceRepositoryProvider);
+            final referencingPads = await isar.padModels
+                .filter()
+                .targetPageIndexEqualTo(page.pageIndex)
+                .findFirst();
+            if (referencingPads != null) {
+              await referencingPads.page.load();
+              final refPage = referencingPads.page.value;
+              if (refPage != null) {
+                await ref
+                    .read(padPageProvider(refPage.pageIndex).notifier)
+                    .deletePad(referencingPads.id.toString());
+              } else {
+                await repo.deletePage(page.id);
+              }
+            } else {
+              await repo.deletePage(page.id);
+            }
 
-      // Volver a la página padre usando SafeFolderNavigator
-      if (!context.mounted) return;
-      SafeFolderNavigator.goBack(ref);
+            // Volver a la página padre usando SafeFolderNavigator
+            SafeFolderNavigator.goBack(ref);
 
-      await LocalAudioStorageService.autoCleanOrphans(isar);
-      ref.invalidate(currentWorkspaceProvider);
-      ref.invalidate(workspaceListProvider);
+            await LocalAudioStorageService.autoCleanOrphans(isar);
+            ref.invalidate(currentWorkspaceProvider);
+            ref.invalidate(workspaceListProvider);
+          },
+        );
+      });
     }
   }
 
@@ -326,36 +335,45 @@ class PadDeleteActions {
     );
 
     if (ok == true) {
-      var repo = ref.read(workspaceRepositoryProvider);
-      var audioEngine = ref.read(audioEngineProvider);
+      return await ConcurrencyShield.run('delete_workspace_$wsId', () async {
+        await BlockingProgressDialog.run(
+          context,
+          title: 'Eliminando workspace "$wsName"...',
+          initialMessage: 'Deteniendo reproducción y borrando archivos...',
+          task: (_) async {
+            var repo = ref.read(workspaceRepositoryProvider);
+            var audioEngine = ref.read(audioEngineProvider);
 
-      // Detener toda reproducción ANTES de borrar archivos del disco para
-      // evitar voces huérfanas. El repo se encargará del borrado físico y de
-      // los pads en la base de datos (defense-in-depth).
-      audioEngine.stopAll();
+            // Detener toda reproducción ANTES de borrar archivos del disco para
+            // evitar voces huérfanas. El repo se encargará del borrado físico y de
+            // los pads en la base de datos (defense-in-depth).
+            audioEngine.stopAll();
 
-      var ws = await repo.getWorkspace(wsId);
-      if (ws != null) {
-        await ws.pages.load();
-        for (var pg in ws.pages) {
-          await pg.pads.load();
-          for (var pad in pg.pads) {
-            audioEngine.stop(pad.id.toString());
-          }
-        }
-      }
+            var ws = await repo.getWorkspace(wsId);
+            if (ws != null) {
+              await ws.pages.load();
+              for (var pg in ws.pages) {
+                await pg.pads.load();
+                for (var pad in pg.pads) {
+                  audioEngine.stop(pad.id.toString());
+                }
+              }
+            }
 
-      // deleteWorkspace: borra pads/paginas/workspace en DB y, como
-      // defense-in-depth, elimina el directorio físico + huérfagos en disco.
-      await repo.deleteWorkspace(wsId);
-      ref.invalidate(workspaceListProvider);
-      var remaining = (await repo.getAllWorkspaces());
-      if (remaining.isNotEmpty) {
-        // Use safe workspace switching with request ID
-        await switchWorkspaceWithRequestId(ref, remaining.first.id);
-        ref.read(currentPageIndexProvider.notifier).state = 0;
-      }
-      return true;
+            // deleteWorkspace: borra pads/paginas/workspace en DB y, como
+            // defense-in-depth, elimina el directorio físico + huérfagos en disco.
+            await repo.deleteWorkspace(wsId);
+            ref.invalidate(workspaceListProvider);
+            var remaining = (await repo.getAllWorkspaces());
+            if (remaining.isNotEmpty) {
+              // Use safe workspace switching with request ID
+              await switchWorkspaceWithRequestId(ref, remaining.first.id);
+              ref.read(currentPageIndexProvider.notifier).state = 0;
+            }
+          },
+        );
+        return true;
+      }) ?? false;
     }
     return false;
   }
@@ -364,27 +382,37 @@ class PadDeleteActions {
     BuildContext context,
     WidgetRef ref,
   ) async {
-    var isar = await ref.read(isarProvider.future);
-    var allPads = await isar.padModels.where().findAll();
-    var activePaths = allPads
-        .map((p) => p.samplePath)
-        .whereType<String>()
-        .toList();
-    var count = await LocalAudioStorageService.cleanUnusedAudioFiles(
-      activePaths,
-    );
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            count > 0
-                ? 'Se eliminaron $count archivos huérfanos del disco'
-                : 'No se encontraron archivos huérfanos para limpiar',
-          ),
-          duration: const Duration(seconds: 3),
-        ),
+    await ConcurrencyShield.run('clean_orphan_audios', () async {
+      var count = 0;
+      await BlockingProgressDialog.run(
+        context,
+        title: 'Limpiando audios huérfanos...',
+        initialMessage: 'Escaneando archivos y referencias...',
+        task: (_) async {
+          var isar = await ref.read(isarProvider.future);
+          var allPads = await isar.padModels.where().findAll();
+          var activePaths = allPads
+              .map((p) => p.samplePath)
+              .whereType<String>()
+              .toList();
+          count = await LocalAudioStorageService.cleanUnusedAudioFiles(
+            activePaths,
+          );
+        },
       );
-    }
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              count > 0
+                  ? 'Se eliminaron $count archivos huérfanos del disco'
+                  : 'No se encontraron archivos huérfanos para limpiar',
+            ),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    });
   }
 }

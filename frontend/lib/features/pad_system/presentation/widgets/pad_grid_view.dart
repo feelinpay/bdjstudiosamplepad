@@ -116,11 +116,11 @@ class _PadCell extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    var isEditMode = ref.watch(isEditModeProvider);
-    var moveSource = ref.watch(padMoveSourceProvider);
-    var isMoving = moveSource == pad.id;
-    var selectedPads = ref.watch(selectedPadsProvider);
-    var isSelected = selectedPads.contains(pad.id);
+    final isEditMode = ref.watch(isEditModeProvider);
+    final isMoving =
+        ref.watch(padMoveSourceProvider.select((s) => s == pad.id));
+    final isSelected =
+        ref.watch(selectedPadsProvider.select((s) => s.contains(pad.id)));
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,

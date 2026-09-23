@@ -268,7 +268,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
           ? Duration(milliseconds: m.endPointMs!)
           : null,
       loopPoint: Duration(milliseconds: m.loopPointMs),
-      backgroundImagePath: m.backgroundImagePath,
+      backgroundImagePath: null,
     );
   }
 
@@ -407,8 +407,6 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       if (colorHex != null) model.colorHex = colorHex;
       if (label != null) model.label = label;
       if (triggerModeIndex != null) model.triggerModeIndex = triggerModeIndex;
-      if (backgroundImagePath != null)
-        model.backgroundImagePath = backgroundImagePath;
       if (padTypeIndex != null) model.padTypeIndex = padTypeIndex;
       if (targetPageIndex != null) model.targetPageIndex = targetPageIndex;
       if (targetMacroId != null) model.targetMacroId = targetMacroId;
@@ -706,8 +704,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       ..fadeOutMs = src.fadeOutMs
       ..startPointMs = src.startPointMs
       ..endPointMs = src.endPointMs
-      ..loopPointMs = src.loopPointMs
-      ..backgroundImagePath = src.backgroundImagePath;
+      ..loopPointMs = src.loopPointMs;
   }
 
   Future<void> _deletePageTree(Isar isar, int pageId, int workspaceId) async {
@@ -1051,7 +1048,6 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
           ..startPointMs = pd.startPointMs
           ..endPointMs = pd.endPointMs
           ..loopPointMs = pd.loopPointMs
-          ..backgroundImagePath = pd.backgroundImagePath
           ..page.value = targetPage;
         padModels.add(m);
         if (pd.childFolder != null) {
@@ -1082,7 +1078,6 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
           ..startPointMs = pd.startPointMs
           ..endPointMs = pd.endPointMs
           ..loopPointMs = pd.loopPointMs
-          ..backgroundImagePath = pd.backgroundImagePath
           ..page.value = targetPage;
         padModels.add(m);
       }

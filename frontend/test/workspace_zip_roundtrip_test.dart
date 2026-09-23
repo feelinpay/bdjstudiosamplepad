@@ -108,13 +108,11 @@ void main() {
   }
 
   test(
-    'Workspace export e import conserva posiciones, edición completa, audios e imágenes',
+    'Workspace export e import conserva posiciones, edición completa y audios',
     () async {
-      // 1. Preparar audio e imagen simulados
+      // 1. Preparar audio simulado
       final srcAudio = File(p.join(tempRoot.path, 'sample_kick.wav'))
         ..writeAsBytesSync(List.filled(1024, 0x55));
-      final srcImage = File(p.join(tempRoot.path, 'pad_art.png'))
-        ..writeAsBytesSync(List.filled(512, 0xAA));
 
       final audioUri = await LocalAudioStorageService.importAudioFile(
         srcAudio.path,
@@ -173,7 +171,6 @@ void main() {
           ..endPointMs = 900
           ..loopPointMs = 120
           ..samplePath = audioUri
-          ..backgroundImagePath = srcImage.path
           ..page.value = rootPage;
         await db1.padModels.put(pad0);
         await pad0.page.save();
@@ -276,10 +273,6 @@ void main() {
           await LocalAudioStorageService.resolvePath(p0.samplePath!);
       expect(File(resolvedAudio).existsSync(), isTrue);
 
-      // Verificar que la imagen de fondo fue extraída y existe en disco
-      expect(p0.backgroundImagePath, isNotNull);
-      expect(File(p0.backgroundImagePath!).existsSync(), isTrue);
-
       // Verificar Pad 5 (carpeta con link a subpágina 1000)
       final p5 = rootPads.firstWhere((p) => p.padId == 5);
       expect(p5.padTypeIndex, 1);
@@ -309,42 +302,22 @@ void main() {
 
       expect(metaText, contains('"format":"bdj-studio-sample-pad-workspace"'));
       expect(metaText, contains('"version":1'));
-      expect(metaText, isNot(contains(srcImage.path)),
-          reason: 'No debe filtrar la ruta privada del sistema local del usuario');
       expect(metaText, isNot(contains('"backgroundImagePath"')),
           reason: 'No debe incluir la propiedad interna backgroundImagePath');
 
-      // 9. CRÍTICO: Borrar un pad y verificar que las imágenes sobreviven a autoCleanOrphans.
-      // Este es el caso de pérdida de datos que se corrigió con el filtro de extensiones
-      // y la inclusión de backgroundImagePath en los paths activos.
-      final importedImagePath = p0.backgroundImagePath!;
-      expect(File(importedImagePath).existsSync(), isTrue,
-          reason: 'La imagen debe existir antes de la prueba de orphan cleaning');
-
-      // Borrar pad15 (Snare, sin imagen) para disparar limpieza de huérfanos
+      // 9. Borrar un pad y verificar que autoCleanOrphans se ejecuta limpiamente
       await db2.writeTxn(() async {
         await db2.padModels.delete(p15.id);
       });
-
-      // Ejecutar autoCleanOrphans: la imagen de pad0 NO debe borrarse
       final deletedCount = await LocalAudioStorageService.autoCleanOrphans(db2);
       expect(deletedCount, greaterThanOrEqualTo(0));
 
-      // ★ Verificación crítica: la imagen de pad0 sigue existiendo
-      expect(File(importedImagePath).existsSync(), isTrue,
-          reason:
-              'autoCleanOrphans NO debe borrar las imágenes de fondo de pads activos');
-
-      // Verificar que el directorio .images está intacto
-      final imageDir = File(importedImagePath).parent;
-      expect(imageDir.existsSync(), isTrue);
-      expect(p.basename(imageDir.path), '.images',
-          reason: 'Las imágenes deben vivir en un directorio oculto .images');
-
-      // 10. Limpieza: al borrar el workspace, su carpeta .images también desaparece
+      // 10. Limpieza: al borrar el workspace, su carpeta de audios se elimina
+      final wsDir = File(resolvedAudio).parent;
+      expect(wsDir.existsSync(), isTrue);
       await LocalAudioStorageService.deleteWorkspaceDir(ws2.name);
-      expect(imageDir.existsSync(), isFalse,
-          reason: 'Las imágenes de pad del workspace deben eliminarse junto con el workspace');
+      expect(wsDir.existsSync(), isFalse,
+          reason: 'La carpeta física del workspace debe eliminarse junto con el workspace');
     },
   );
 

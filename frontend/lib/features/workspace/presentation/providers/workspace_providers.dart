@@ -7,6 +7,8 @@ import '../../data/models/workspace_model.dart';
 import '../../domain/services/workspace_exporter.dart';
 import '../../domain/services/workspace_importer.dart';
 import '../../domain/services/workspace_zip_importer.dart';
+import '../../domain/services/project_exporter.dart';
+import '../../domain/services/project_importer.dart';
 import '../../../../core/providers/database_provider.dart';
 import '../../../settings/presentation/providers/settings_provider.dart';
 import '../../../settings/data/services/settings_service.dart';
@@ -152,6 +154,14 @@ final workspaceImporterProvider = Provider((ref) {
 
 final workspaceZipImporterProvider = Provider((ref) {
   return WorkspaceZipImporter(ref.watch(isarProvider.future));
+});
+
+final projectExporterProvider = Provider((ref) {
+  return ProjectExporter(ref.watch(isarProvider.future));
+});
+
+final projectImporterProvider = Provider((ref) {
+  return ProjectImporter(ref.watch(isarProvider.future));
 });
 
 class WorkspaceManager extends StateNotifier<int?> {

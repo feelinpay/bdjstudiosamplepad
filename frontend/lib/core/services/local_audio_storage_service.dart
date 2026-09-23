@@ -323,8 +323,9 @@ class LocalAudioStorageService {
   /// que ya no estén siendo utilizados por ningún pad en la base de datos.
   /// También limpia los waveforms huérfanos.
   static Future<int> cleanUnusedAudioFiles(
-    List<String> activeSamplePaths,
-  ) async {
+    List<String> activeSamplePaths, {
+    bool cleanInternalDirs = false,
+  }) async {
     try {
       final audiosDir = await _getAudiosDir();
       final waveDir = await _getWaveformDir();
@@ -359,14 +360,28 @@ class LocalAudioStorageService {
           final relativePath = p
               .relative(entity.path, from: audiosDir.path)
               .replaceAll('\\', '/');
-          // Los directorios internos (folder_imports/, restored_*, etc.) nunca
-          // se barren: contienen imports y restauraciones del usuario.
-          if (isInternalMediaDirPath(relativePath)) continue;
+          // En limpiezas ordinarias los directorios internos se respetan;
+          // en reemplazo total de proyecto (cleanInternalDirs = true) se purgan
+          // si ningún pad del nuevo proyecto los referencia.
+          if (!cleanInternalDirs && isInternalMediaDirPath(relativePath)) {
+            continue;
+          }
           if (!activeFileNames.contains(relativePath)) {
             await entity.delete();
             deletedCount++;
             await _deleteRelatedWaveforms(waveDir, p.basename(relativePath));
           }
+        }
+      }
+
+      // Eliminar carpetas vacías que hayan quedado tras borrar archivos
+      for (final entity in entities) {
+        if (entity is Directory) {
+          try {
+            if (await entity.exists() && entity.listSync().isEmpty) {
+              await entity.delete(recursive: true);
+            }
+          } catch (_) {}
         }
       }
 
@@ -397,14 +412,17 @@ class LocalAudioStorageService {
   }
 
   /// Ejecuta la limpieza de archivos huérfanos en disco comparando contra todos los pads activos de Isar.
-  /// Incluye tanto samplePath como backgroundImagePath para no borrar imágenes de pads.
-  static Future<int> autoCleanOrphans(Isar isar) async {
+  static Future<int> autoCleanOrphans(
+    Isar isar, {
+    bool cleanInternalDirs = false,
+  }) async {
     final allPads = await isar.padModels.where().findAll();
-    final activePaths = <String>[
-      ...allPads.map((p) => p.samplePath).whereType<String>(),
-      ...allPads.map((p) => p.backgroundImagePath).whereType<String>(),
-    ];
-    return await cleanUnusedAudioFiles(activePaths);
+    final activePaths =
+        allPads.map((p) => p.samplePath).whereType<String>().toList();
+    return await cleanUnusedAudioFiles(
+      activePaths,
+      cleanInternalDirs: cleanInternalDirs,
+    );
   }
 
   /// Garantiza la creación física en tiempo real de la carpeta raíz de un Workspace en disco.

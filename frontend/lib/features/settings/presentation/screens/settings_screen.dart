@@ -11,12 +11,17 @@ import '../../../../core/providers/core_providers.dart';
 import '../../../../core/audio/audio_output_device.dart';
 import '../../../../core/audio/audio_engine_port.dart';
 import '../../../../core/audio/audio_engine_state.dart';
+import '../../../../core/services/crash_log_service.dart';
 import '../../../../core/audio/audio_initialization_result.dart';
 import '../../../../core/providers/audio_providers.dart';
 import '../../../../core/utils/concurrency_shield.dart';
 import '../../domain/audio_change_result.dart';
 import '../../../desktop/presentation/providers/desktop_providers.dart';
 import '../../../desktop/domain/desktop_shortcut_resolver.dart';
+import '../../../../core/constants/feature_flags.dart';
+import '../../../../core/widgets/blocking_progress_dialog.dart';
+import '../../../workspace/presentation/providers/workspace_providers.dart';
+import '../../../workspace/domain/services/project_importer.dart';
 import '../providers/settings_provider.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -86,6 +91,26 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               context,
               MaterialPageRoute(builder: (_) => const DiagnosticScreen()),
             ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.copy_rounded, color: Colors.cyanAccent),
+            title: const Text('Copiar informe técnico para soporte'),
+            subtitle: const Text(
+              'Copia specs del dispositivo, RAM, versión y logs al portapapeles',
+              style: TextStyle(fontSize: 11, color: Colors.white38),
+            ),
+            onTap: () async {
+              final report = await CrashLogService.generateDiagnosticReport();
+              await Clipboard.setData(ClipboardData(text: report));
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Informe de diagnóstico copiado al portapapeles.'),
+                    backgroundColor: Colors.deepPurpleAccent,
+                  ),
+                );
+              }
+            },
           ),
           const Divider(height: 28),
           const Text(
@@ -208,15 +233,45 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             onTap: () => _selectPadSize(context, ref),
           ),
-          const Divider(height: 28),
-          const Text(
-            'Respaldo / Backup',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.cyanAccent,
+          // Respaldo del PROYECTO COMPLETO: implementado y verificado, pero
+          // oculto hasta la version que lo anuncie. Ver FeatureFlags; se
+          // activa con --dart-define=BDJ_PROJECT_BACKUP=true sin tocar codigo.
+          if (FeatureFlags.projectBackupVisible) ...[
+            const Divider(height: 28),
+            const Text(
+              'Respaldo / Backup',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.cyanAccent,
+              ),
             ),
-          ),
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(
+                Icons.file_upload_outlined,
+                color: Colors.cyanAccent,
+              ),
+              title: const Text('Exportar proyecto completo'),
+              subtitle: const Text(
+                'Guarda todos los workspaces, páginas/carpetas, pads con ediciones, samples y macros (.sppproject)',
+                style: TextStyle(fontSize: 11, color: Colors.white38),
+              ),
+              onTap: () => _exportProject(context),
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.file_download_outlined,
+                color: Colors.cyanAccent,
+              ),
+              title: const Text('Importar proyecto completo'),
+              subtitle: const Text(
+                'Restaura workspaces, carpetas, pads y audios fusionando o reemplazando (.sppproject / .sppbackup)',
+                style: TextStyle(fontSize: 11, color: Colors.white38),
+              ),
+              onTap: () => _importProject(context),
+            ),
+          ],
           const Divider(height: 28),
           _LicenseCard(
             license: license,
@@ -628,6 +683,180 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return 'Extra pequeño';
       default:
         return 'Auto';
+    }
+  }
+
+  Future<void> _exportProject(BuildContext context) async {
+    final exporter = ref.read(projectExporterProvider);
+    try {
+      final path = await ConcurrencyShield.run('project_export', () async {
+        return await BlockingProgressDialog.run<String?>(
+          context,
+          title: 'Exportar proyecto',
+          initialMessage: 'Preparando muestras y configuraciones...',
+          task: (controller) async {
+            return await exporter.exportProjectWithPicker(
+              onProgress: (current, total) {
+                controller.updateProgress(
+                  current,
+                  total,
+                  'Empaquetando muestras ($current de $total)...',
+                );
+              },
+            );
+          },
+        );
+      });
+
+      if (path != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.green,
+            content: Text('Proyecto exportado con éxito.'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text('Error al exportar el proyecto: $e'),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _importProject(BuildContext context) async {
+    final mode = await showDialog<BackupImportMode>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2C),
+        title: const Text(
+          'Importar proyecto completo',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Selecciona cómo deseas importar el archivo (.sppproject o .sppbackup):',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.merge_type, color: Colors.cyanAccent),
+              title: const Text(
+                'Fusionar con el proyecto actual (Recomendado)',
+                style: TextStyle(color: Colors.white, fontSize: 14),
+              ),
+              subtitle: const Text(
+                'Añade los workspaces y sonidos sin borrar tus datos actuales.',
+                style: TextStyle(color: Colors.white54, fontSize: 11),
+              ),
+              onTap: () => Navigator.pop(ctx, BackupImportMode.merge),
+            ),
+            const Divider(height: 16, color: Colors.white24),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(
+                Icons.warning_amber_rounded,
+                color: Colors.amberAccent,
+              ),
+              title: const Text(
+                'Reemplazar proyecto completo',
+                style: TextStyle(color: Colors.white, fontSize: 14),
+              ),
+              subtitle: const Text(
+                '¡Atención! Reemplazará todos los workspaces, pads y macros por los del archivo.',
+                style: TextStyle(color: Colors.amber, fontSize: 11),
+              ),
+              onTap: () => Navigator.pop(ctx, BackupImportMode.replace),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+        ],
+      ),
+    );
+
+    if (mode == null || !context.mounted) return;
+
+    final importer = ref.read(projectImporterProvider);
+    try {
+      final result = await ConcurrencyShield.run('project_import', () async {
+        return await BlockingProgressDialog.run<ProjectImportResult?>(
+          context,
+          title: 'Importando proyecto',
+          initialMessage: 'Descomprimiendo archivo...',
+          task: (controller) async {
+            return await importer.importProjectWithPicker(
+              mode: mode,
+              onProgress: (current, total) {
+                controller.updateProgress(
+                  current,
+                  total,
+                  'Copiando archivos de audio ($current de $total)...',
+                );
+              },
+            );
+          },
+        );
+      });
+
+      if (result == null) return;
+
+      if (!context.mounted) return;
+
+      if (result.success) {
+        ref.invalidate(workspaceListProvider);
+        ref.invalidate(currentWorkspaceProvider);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.green,
+            content: Text(
+              '${result.message} (${result.workspacesImported} workspaces, ${result.padsImported} pads)',
+            ),
+          ),
+        );
+      } else {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2C),
+            title: const Text(
+              'Error al importar',
+              style: TextStyle(color: Colors.redAccent),
+            ),
+            content: Text(
+              result.message,
+              style: const TextStyle(color: Colors.white70),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Aceptar'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text('Error durante la importación: $e'),
+          ),
+        );
+      }
     }
   }
 

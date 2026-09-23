@@ -3,16 +3,24 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-    <!-- Lectura de almacenamiento compartido para importar carpetas de audios -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+    <!-- Android 13+ (API 33+) para acceso a archivos de música y audio -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
-    <!-- Acceso completo a archivos: permite escanear carpetas con dart:io igual que en PC -->
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage"/>
+    <!-- Android 6 a 12 (API 23 a 32) para lectura de almacenamiento -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+    <!-- Android 9 y anteriores para guardado en almacenamiento externo -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
+    <!-- No exigir hardware MIDI obligatorio para que la app sea instalable en cualquier dispositivo -->
+    <uses-feature
+        android:name="android.software.midi"
+        android:required="false"
+        tools:replace="android:required" />
+
     <application
         android:label="BDJ Studio Sample Pad"
         android:name="${applicationName}"
-        android:allowBackup="true"
-        android:fullBackupContent="true"
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
@@ -36,7 +44,7 @@
             android:name=".PerformanceAudioService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
-        <!-- Enable Skia renderer for maximum performance on low-end budget Android GPUs -->
+        <!-- Forzar renderizador Skia para evitar pantallas negras y problemas con drivers Vulkan en tablets/móviles -->
         <meta-data
             android:name="io.flutter.embedding.android.EnableImpeller"
             android:value="false" />

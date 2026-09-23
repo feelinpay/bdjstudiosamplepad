@@ -17,8 +17,12 @@
 set -u
 
 APP="/Applications/BDJ Studio Sample Pad.app"
-BUNDLE_ID="com.example.bdjStudioPro"
+BUNDLE_ID="com.bdjstudio.samplepadpro"
+LEGACY_BUNDLE_ID="com.example.bdjStudioPro"
 SUPPORT="$HOME/Library/Application Support"
+CACHES="$HOME/Library/Caches"
+PREFS="$HOME/Library/Preferences"
+SAVED_STATE="$HOME/Library/Saved Application State"
 
 KEEP_APP="${1:-}"
 
@@ -31,8 +35,13 @@ DATA_DIRS=(
   "$SUPPORT/BDJ Studio/BDJ Studio Sample Pad"
   "$SUPPORT/bdj_studio_sample_pad"
   "$SUPPORT/$BUNDLE_ID"
-  "$HOME/Library/Caches/BDJ Studio Sample Pad"
-  "$HOME/Library/Caches/$BUNDLE_ID"
+  "$SUPPORT/$LEGACY_BUNDLE_ID"
+  "$CACHES/BDJ Studio Sample Pad"
+  "$CACHES/BDJ Studio/BDJ Studio Sample Pad"
+  "$CACHES/$BUNDLE_ID"
+  "$CACHES/$LEGACY_BUNDLE_ID"
+  "$SAVED_STATE/$BUNDLE_ID.savedState"
+  "$SAVED_STATE/$LEGACY_BUNDLE_ID.savedState"
 )
 
 remove_if_present() {
@@ -42,7 +51,7 @@ remove_if_present() {
   fi
 }
 
-echo "Desinstalando BDJ Studio Sample Pad..."
+echo "Desinstalando BDJ Studio Sample Pad en macOS..."
 
 if [ "$KEEP_APP" != "--sin-app" ] && [ -d "$APP" ]; then
   echo "  -> borrando $APP"
@@ -53,10 +62,25 @@ for dir in "${DATA_DIRS[@]}"; do
   remove_if_present "$dir"
 done
 
-remove_if_present "$HOME/Library/Preferences/$BUNDLE_ID.plist"
+# Preferencias plist
+remove_if_present "$PREFS/$BUNDLE_ID.plist"
+remove_if_present "$PREFS/$LEGACY_BUNDLE_ID.plist"
 
-if [ -d "$SUPPORT/BDJ Studio" ] && [ -z "$(ls -A "$SUPPORT/BDJ Studio")" ]; then
+# Intentar eliminar entradas del Keychain asociadas a la app
+if command -v security &>/dev/null; then
+  security delete-generic-password -s "$BUNDLE_ID" 2>/dev/null || true
+  security delete-generic-password -s "bdj_sample_pad" 2>/dev/null || true
+fi
+
+# Limpieza segura de carpetas padre 'BDJ Studio':
+# SOLO se eliminan si están completamente vacías (no hay Search Pro, Wave Video, etc.)
+if [ -d "$SUPPORT/BDJ Studio" ] && [ -z "$(ls -A "$SUPPORT/BDJ Studio" 2>/dev/null)" ]; then
+  echo "  -> carpeta padre $SUPPORT/BDJ Studio vacía, eliminando"
   rmdir "$SUPPORT/BDJ Studio" 2>/dev/null || true
 fi
 
-echo "Listo. No queda ningún dato de la aplicación."
+if [ -d "$CACHES/BDJ Studio" ] && [ -z "$(ls -A "$CACHES/BDJ Studio" 2>/dev/null)" ]; then
+  rmdir "$CACHES/BDJ Studio" 2>/dev/null || true
+fi
+
+echo "Listo. No queda ningún dato de BDJ Studio Sample Pad."

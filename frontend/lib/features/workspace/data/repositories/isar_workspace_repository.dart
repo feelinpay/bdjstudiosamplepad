@@ -175,8 +175,7 @@ class IsarWorkspaceRepository implements WorkspaceRepository {
             ..fadeOutMs = pad.fadeOutMs
             ..startPointMs = pad.startPointMs
             ..endPointMs = pad.endPointMs
-            ..loopPointMs = pad.loopPointMs
-            ..backgroundImagePath = pad.backgroundImagePath;
+            ..loopPointMs = pad.loopPointMs;
           copy.page.value = newPage;
           await isar.padModels.put(copy);
           await copy.page.save();

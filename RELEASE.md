@@ -124,6 +124,52 @@ zipalign -c -P 16 -v 4 distribution/BDJ_Studio_Sample_Pad_1.0.3.apk
 `android:pageSizeCompat` **no** es una solución: solo existe a partir de
 Android 17 y no cubre los dispositivos afectados hoy.
 
+### Compatibilidad con dispositivos antiguos
+
+Cuatro decisiones del manifest existen por una razón concreta. Ninguna es
+cosmética y ninguna debe quitarse sin entender qué rompe.
+
+**`EnableImpeller = false`.** Fuerza el renderizador Skia. Impeller usa Vulkan,
+y en GPUs de gama baja o antiguas (Mali, Adreno viejas, PowerVR) el driver
+falla de una forma muy característica: el proceso arranca y vive, pero nunca
+presenta un fotograma. El usuario ve una **pantalla negra**, no un cierre. Ya
+pasó una vez: la línea se quitó del manifest y una tablet Samsung dejó de
+pintar. En una app de pads —rectángulos de color, texto— la diferencia de
+rendimiento entre Impeller y Skia es invisible; la diferencia de estabilidad no
+lo es. **No se prueba en emulador**: el emulador usa el driver de la máquina
+anfitriona, así que siempre funciona ahí.
+
+**`uses-feature android.software.midi` con `required="false"`.**
+`flutter_midi_command` lo declara como obligatorio. Si se deja así, Play Store
+filtra y oculta la app a cualquier dispositivo sin hardware MIDI, que son casi
+todas las tablets. El `tools:replace="android:required"` es lo que pisa la
+declaración del plugin.
+
+**`allowBackup="false"` + `backup_rules.xml` + `data_extraction_rules.xml`.**
+La base es un archivo Isar. Un restore de Google Backup, o una transferencia
+dispositivo-a-dispositivo, puede traer un `.isar` de otro equipo o de otra
+versión del esquema y dejar la app sin abrir. En Android 12+ `allowBackup` solo
+corta la copia en la nube: la transferencia D2D se controla aparte con
+`dataExtractionRules`, por eso hacen falta los tres.
+
+**`minSdk 24` (Android 7.0).** Por debajo de eso la app no instala — el síntoma
+es *"aplicación no instalada"*, nunca una pantalla negra. Y como el mínimo llega
+hasta Android 7, todo código nativo que use API 26+ necesita su guard explícito:
+`PerformanceAudioService` crea el `NotificationChannel` dentro de un
+`if (SDK_INT >= O)` justamente por esto.
+
+El APK se compila con las tres ABIs (`arm64-v8a`, `armeabi-v7a`, `x86_64`).
+`armeabi-v7a` no es opcional: las tablets baratas de 32 bits que corren
+Android 7-10 son exactamente el público que da problemas.
+
+### R8 desactivado a propósito
+
+`isMinifyEnabled` y `isShrinkResources` están en `false`. R8 rompe la reflexión,
+y hay tres candidatos en el proyecto (Isar, `flutter_secure_storage`,
+`flutter_midi_command`). El coste de tenerlo apagado es un APK de ~79 MB en vez
+de ~50. Si algún día se activa, hay que probar el APK **release** completo en
+hardware real, no solo comprobar que compila.
+
 ---
 
 ## macOS — `.github/workflows/macos-build.yml`

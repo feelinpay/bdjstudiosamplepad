@@ -10,6 +10,7 @@ import '../widgets/search_bar_widget.dart';
 import '../../../workspace/presentation/providers/workspace_providers.dart';
 import '../../../../core/providers/ui_providers.dart';
 import '../../../../core/utils/concurrency_shield.dart';
+import '../../../../core/widgets/blocking_progress_dialog.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../settings/presentation/screens/settings_screen.dart';
@@ -112,7 +113,9 @@ class _ExplorerBody extends ConsumerWidget {
                       Column(
                         children: [
                           Expanded(child: PadGridView(pageIndex: pageIndex)),
-                          if (ref.watch(padMoveSourceProvider) != null) ...[
+                          if (ref.watch(
+                            padMoveSourceProvider.select((src) => src != null),
+                          )) ...[
                             Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 16,
@@ -430,20 +433,12 @@ class _ExplorerBody extends ConsumerWidget {
                 await _createWorkspace(context, ref);
                 return;
               }
-              if (value == 'import_workspace_file') {
-                await _importWorkspaceFile(context, ref);
-                return;
-              }
               if (value == 'import') {
                 await _importWorkspace(context, ref);
                 return;
               }
               var ws = await ref.read(currentWorkspaceProvider.future);
               if (ws == null) return;
-              if (value == 'export_workspace') {
-                await _exportWorkspace(context, ref, ws);
-                return;
-              }
               var repo = ref.read(workspaceRepositoryProvider);
               if (value == 'duplicate') {
                 var copy = await repo.duplicateWorkspace(ws.id);
@@ -503,23 +498,9 @@ class _ExplorerBody extends ConsumerWidget {
                 ),
               ),
               const PopupMenuItem(
-                value: 'export_workspace',
-                child: Text(
-                  'Exportar workspace (.sppworkspace)',
-                  style: TextStyle(color: Colors.white),
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'import_workspace_file',
-                child: Text(
-                  'Importar workspace (.sppworkspace)',
-                  style: TextStyle(color: Colors.white),
-                ),
-              ),
-              const PopupMenuItem(
                 value: 'import',
                 child: Text(
-                  'Importar desde carpeta',
+                  'Importar workspace',
                   style: TextStyle(color: Colors.white),
                 ),
               ),
@@ -658,217 +639,110 @@ class _ExplorerBody extends ConsumerWidget {
     }
   }
 
-  Future<void> _exportWorkspace(
-    BuildContext context,
-    WidgetRef ref,
-    WorkspaceModel ws,
-  ) async {
-    try {
-      if (Platform.isAndroid) {
-        await PadAddActions.ensureAndroidStorageAccess(context);
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-      }
-
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 2),
-            content: Text('Exportando workspace "${ws.name}"...'),
-          ),
-        );
-      }
-
-      final exporter = ref.read(workspaceExporterProvider);
-      final path = await exporter.exportWorkspaceWithPicker(workspaceId: ws.id);
-
-      if (!context.mounted) return;
-      if (path != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 3),
-            content: Text('Workspace exportado correctamente:\n$path'),
-          ),
-        );
-      }
-    } on Object catch (error) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 3),
-            content: Text('Error al exportar workspace: $error'),
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _importWorkspaceFile(BuildContext context, WidgetRef ref) async {
-    try {
-      if (Platform.isAndroid) {
-        await PadAddActions.ensureAndroidStorageAccess(context);
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-      }
-
-      final result = await FilePicker.pickFiles(
-        dialogTitle: 'Seleccionar archivo de workspace',
-        type: FileType.custom,
-        allowedExtensions: const ['sppworkspace', 'zip'],
-      );
-
-      if (result == null || result.files.isEmpty) return;
-      final filePath = result.files.single.path;
-      if (filePath == null || filePath.isEmpty) return;
-
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 2),
-            content: Text('Importando workspace... Por favor espere.'),
-          ),
-        );
-      }
-
-      final importer = ref.read(workspaceZipImporterProvider);
-      final importedWorkspace = await importer.importFromZipFile(filePath);
-
-      if (!context.mounted) return;
-      if (importedWorkspace == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 3),
-            content: Text(
-              'No se pudo importar el archivo .sppworkspace. '
-              'Verifique que el archivo sea válido.',
-            ),
-          ),
-        );
-        return;
-      }
-
-      ref.invalidate(workspaceListProvider);
-      ref.invalidate(currentWorkspaceProvider);
-      final wsId = importedWorkspace.id;
-      await switchWorkspaceWithRequestId(ref, wsId);
-      ref.invalidate(padPageProvider);
-      ref.read(currentPageIndexProvider.notifier).state = 0;
-      ref.read(folderBackStackProvider.notifier).state = <int>[];
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          duration: const Duration(seconds: 2),
-          content: Text('Workspace "${importedWorkspace.name}" importado.'),
-        ),
-      );
-    } on Object catch (error) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 3),
-            content: Text('Error al importar el workspace: $error'),
-          ),
-        );
-      }
-    }
-  }
-
   Future<void> _importWorkspace(BuildContext context, WidgetRef ref) async {
-    Directory? cacheRoot;
-    try {
-      // En Android pedir acceso completo una vez por sesión: con ese permiso
-      // la importación funciona exactamente igual que en PC.
-      if (Platform.isAndroid) {
-        await PadAddActions.ensureAndroidStorageAccess(context);
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-      }
+    await ConcurrencyShield.run('import_workspace_folder', () async {
+      Directory? cacheRoot;
+      try {
+        // En Android pedir acceso completo una vez por sesión: con ese permiso
+        // la importación funciona exactamente igual que en PC.
+        if (Platform.isAndroid) {
+          await PadAddActions.ensureAndroidStorageAccess(context);
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+        }
 
-      var sourcePath = await FilePicker.getDirectoryPath().timeout(
-        const Duration(minutes: 5),
-        onTimeout: () {
-          debugPrint('BDJ WS Import: selector timeout (5 min) → null');
-          return null;
-        },
-      );
-      if (sourcePath == null || sourcePath.isEmpty) return;
-
-      final importer = ref.read(workspaceImporterProvider);
-      WorkspaceModel? importedWorkspace;
-
-      if (Platform.isAndroid) {
-        final treeLike = SafFolderImportService.looksLikeTreeUri(sourcePath);
-        final resolved = LocalAudioStorageService.resolveContentUriToPath(sourcePath);
-        debugPrint(
-          'BDJ WS Import: uri=$sourcePath resolved=$resolved treeLike=$treeLike',
+        var sourcePath = await FilePicker.getDirectoryPath().timeout(
+          const Duration(minutes: 5),
+          onTimeout: () {
+            debugPrint('BDJ WS Import: selector timeout (5 min) → null');
+            return null;
+          },
         );
+        if (sourcePath == null || sourcePath.isEmpty) return;
 
-        // Estrategia 1: copiar el árbol SAF al cache (sin permisos) e importarlo.
-        String? candidatePath;
-        if (treeLike) {
-          final progress = ValueNotifier<int>(0);
-          PadAddActions.showScanningDialog(context, progress);
-          SafImportResult? copied;
-          try {
-            copied = await SafFolderImportService.copyTreeToLocalCache(
-              sourcePath,
-              destName: 'workspace',
-              onProgress: (n) => progress.value = n,
+        final importer = ref.read(workspaceImporterProvider);
+        WorkspaceModel? importedWorkspace;
+
+        if (Platform.isAndroid) {
+          final treeLike = SafFolderImportService.looksLikeTreeUri(sourcePath);
+          final resolved = LocalAudioStorageService.resolveContentUriToPath(sourcePath);
+          debugPrint(
+            'BDJ WS Import: uri=$sourcePath resolved=$resolved treeLike=$treeLike',
+          );
+
+          // Estrategia 1: copiar el árbol SAF al cache (sin permisos) e importarlo.
+          String? candidatePath;
+          if (treeLike) {
+            final copied = await BlockingProgressDialog.run(
+              context,
+              title: 'Copiando carpeta de audios...',
+              initialMessage: 'Escaneando archivos...',
+              task: (progress) async {
+                return SafFolderImportService.copyTreeToLocalCache(
+                  sourcePath,
+                  destName: 'workspace',
+                  onProgress: (n) => progress.updateCount(n, 'Copiando audios...'),
+                );
+              },
             );
-          } catch (error, st) {
-            debugPrint('BDJ WS Import: SAF copy exception: $error\n$st');
-          } finally {
-            if (context.mounted) ConcurrencyShield.safeRootPop(context);
-            progress.dispose();
+            if (copied != null && copied.root.totalAudioCount > 0) {
+              cacheRoot = copied.cacheDirectory;
+              candidatePath = p.join(cacheRoot.path, copied.root.name);
+            }
           }
-          if (copied != null && copied.root.totalAudioCount > 0) {
-            cacheRoot = copied.cacheDirectory;
-            candidatePath = p.join(cacheRoot.path, copied.root.name);
+
+          // Estrategia 2: importar directo de la ruta física resuelta
+          final pathToImport = candidatePath ?? (Directory(resolved).existsSync() ? resolved : null);
+          if (pathToImport != null) {
+            importedWorkspace = await BlockingProgressDialog.run(
+              context,
+              title: 'Importando workspace...',
+              initialMessage: 'Organizando páginas y pads...',
+              task: (_) => importer.importWorkspace(pathToImport),
+            );
           }
+        } else {
+          importedWorkspace = await BlockingProgressDialog.run(
+            context,
+            title: 'Importando workspace...',
+            initialMessage: 'Copiando audios y organizando páginas...',
+            task: (_) => importer.importWorkspace(sourcePath),
+          );
         }
 
-        // Estrategia 2: importar directo de la ruta física resuelta
-        // (funciona cuando se concedió "Todos los archivos").
-        if (candidatePath != null) {
-          importedWorkspace = await importer.importWorkspace(candidatePath);
-        }
-        if (importedWorkspace == null && Directory(resolved).existsSync()) {
-          importedWorkspace = await importer.importWorkspace(resolved);
-        }
-      } else {
-        importedWorkspace = await importer.importWorkspace(sourcePath);
-      }
-
-      if (!context.mounted) return;
-      if (importedWorkspace == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 3),
-            content: Text(
-              'La carpeta no contiene archivos de audio compatibles '
-              '(MP3, WAV, FLAC, OGG...) ni en sus subcarpetas.',
+        if (!context.mounted) return;
+        if (importedWorkspace == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              duration: Duration(seconds: 3),
+              content: Text(
+                'La carpeta no contiene archivos de audio compatibles '
+                '(MP3, WAV, FLAC, OGG...) ni en sus subcarpetas.',
+              ),
             ),
-          ),
-        );
-        return;
-      }
-      ref.invalidate(workspaceListProvider);
-      ref.invalidate(currentWorkspaceProvider);
-      final wsId = importedWorkspace.id;
-      // Use safe workspace switching with request ID
-      await switchWorkspaceWithRequestId(ref, wsId);
-      ref.invalidate(padPageProvider);
-      ref.read(currentPageIndexProvider.notifier).state = 0;
-      ref.read(folderBackStackProvider.notifier).state = <int>[];
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(duration: const Duration(seconds: 2), content: Text('Workspace "${importedWorkspace.name}" importado.')),
-      );
-    } on Object catch (error) {
-      if (context.mounted) {
+          );
+          return;
+        }
+        ref.invalidate(workspaceListProvider);
+        ref.invalidate(currentWorkspaceProvider);
+        final wsId = importedWorkspace.id;
+        // Use safe workspace switching with request ID
+        await switchWorkspaceWithRequestId(ref, wsId);
+        ref.invalidate(padPageProvider);
+        ref.read(currentPageIndexProvider.notifier).state = 0;
+        ref.read(folderBackStackProvider.notifier).state = <int>[];
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(duration: const Duration(seconds: 2), content: Text('Error al importar el workspace: $error')),
+          SnackBar(duration: const Duration(seconds: 2), content: Text('Workspace "${importedWorkspace.name}" importado.')),
         );
+      } on Object catch (error) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(duration: const Duration(seconds: 2), content: Text('Error al importar el workspace: $error')),
+          );
+        }
+      } finally {
+        await SafFolderImportService.deleteCachedCopy(cacheRoot);
       }
-    } finally {
-      await SafFolderImportService.deleteCachedCopy(cacheRoot);
-    }
+    });
   }
 
   Future<void> _reorderWorkspaces(BuildContext context, WidgetRef ref) async {

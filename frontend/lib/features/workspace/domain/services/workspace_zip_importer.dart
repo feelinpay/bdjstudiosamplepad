@@ -28,7 +28,10 @@ class WorkspaceZipImporter {
   WorkspaceZipImporter(this.dbFuture);
 
   /// Lee y descomprime el archivo .sppworkspace en staging y lo importa.
-  Future<WorkspaceModel?> importFromZipFile(String filePath) async {
+  Future<WorkspaceModel?> importFromZipFile(
+    String filePath, {
+    void Function(int current, int total)? onProgress,
+  }) async {
     final file = File(filePath);
     if (!await file.exists()) {
       debugPrint('[WorkspaceZipImporter] El archivo no existe: $filePath');
@@ -104,36 +107,30 @@ class WorkspaceZipImporter {
       final cleanNamespace =
           LocalAudioStorageService.sanitizeSegment(uniqueWsName);
 
-      // 4. Directorio de destino para audios e imágenes dentro de Assets/Audio/<Workspace>
+      // 4. Directorio de destino para audios dentro de Assets/Audio/<Workspace>
       final audiosBaseDir = await AppStorageService.mediaDirectory();
       final wsDir = Directory(p.join(audiosBaseDir.path, cleanNamespace));
       await wsDir.create(recursive: true);
       createdWorkspaceDir = wsDir;
 
-      final wsImagesDir = Directory(p.join(wsDir.path, '.images'));
-      await wsImagesDir.create(recursive: true);
-
       final audioMapping = <String, String>{}; // mediaName -> app_local:// URI
-      final imageMapping = <String, String>{}; // imageName -> absolute path
 
       final mediaStagingDir = Directory(p.join(stagingDir.path, 'media'));
       if (await mediaStagingDir.exists()) {
-        final entries = mediaStagingDir.listSync().whereType<File>();
+        final entries = mediaStagingDir.listSync().whereType<File>().toList();
+        final totalFiles = entries.length;
+        var copiedFiles = 0;
+        onProgress?.call(0, totalFiles > 0 ? totalFiles : 1);
+
         for (final srcFile in entries) {
           final fileName = p.basename(srcFile.path);
-          if (fileName.startsWith('img_')) {
-            // Imagen de pad: mover/copiar a wsImagesDir
-            final destImageFile = File(p.join(wsImagesDir.path, fileName));
-            await srcFile.copy(destImageFile.path);
-            imageMapping[fileName] = destImageFile.path;
-          } else {
-            // Archivo de audio: copiar a wsDir
-            final destAudioFile = File(p.join(wsDir.path, fileName));
-            await srcFile.copy(destAudioFile.path);
-            final relPosix = '$cleanNamespace/$fileName';
-            audioMapping[fileName] =
-                '${LocalAudioStorageService.prefix}$relPosix';
-          }
+          final destAudioFile = File(p.join(wsDir.path, fileName));
+          await srcFile.copy(destAudioFile.path);
+          final relPosix = '$cleanNamespace/$fileName';
+          audioMapping[fileName] =
+              '${LocalAudioStorageService.prefix}$relPosix';
+          copiedFiles++;
+          onProgress?.call(copiedFiles, totalFiles > 0 ? totalFiles : 1);
         }
       }
 
@@ -197,11 +194,7 @@ class WorkspaceZipImporter {
           if (page == null) continue;
 
           final mediaKey = padData['media'] as String?;
-          final imageKey = padData['image'] as String?;
-
           final samplePath = mediaKey != null ? audioMapping[mediaKey] : null;
-          final backgroundImagePath =
-              imageKey != null ? imageMapping[imageKey] : null;
 
           final pad = PadModel()
             ..padId = (padData['padId'] as int?) ?? 0
@@ -224,7 +217,6 @@ class WorkspaceZipImporter {
             ..endPointMs = padData['endPointMs'] as int?
             ..loopPointMs = (padData['loopPointMs'] as int?) ?? 0
             ..samplePath = samplePath
-            ..backgroundImagePath = backgroundImagePath
             ..page.value = page;
 
           await isar.padModels.put(pad);

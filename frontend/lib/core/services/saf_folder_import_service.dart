@@ -70,9 +70,9 @@ class SafFolderImportService {
     return path.contains('%3A') || path.contains('%2F');
   }
 
-  /// Verdadero si la app puede leer almacenamiento compartido con dart:io
-  /// (All-Files-Access en Android 11+, READ_EXTERNAL_STORAGE en versiones
-  /// anteriores). Con este acceso la importación funciona igual que en PC.
+  /// Verdadero si la app tiene permiso runtime para acceder a los archivos de audio
+  /// del dispositivo (READ_MEDIA_AUDIO en Android 13+, READ_EXTERNAL_STORAGE en
+  /// Android 6 a 12, o concedido por defecto en versiones anteriores).
   static Future<bool> isDirectStorageAccessGranted() async {
     try {
       return await _channel.invokeMethod<bool>('isAllFilesAccessGranted') ?? false;
@@ -86,8 +86,8 @@ class SafFolderImportService {
     }
   }
 
-  /// Abre ajustes (Android 11+) o lanza el diálogo runtime (Android 10-).
-  /// El resultado real se consulta después con [isDirectStorageAccessGranted].
+  /// Solicita los permisos de audio oficiales según la versión de Android
+  /// (diálogo nativo en tiempo de ejecución).
   static Future<void> requestDirectStorageAccess() async {
     try {
       await _channel.invokeMethod<dynamic>('requestAllFilesAccess');
@@ -95,6 +95,15 @@ class SafFolderImportService {
       debugPrint('[SafFolderImport] requestAllFilesAccess falló: ${error.message}');
     } on Object catch (error) {
       debugPrint('[SafFolderImport] requestAllFilesAccess no disponible: $error');
+    }
+  }
+
+  /// Abre los ajustes de la aplicación en el sistema para permitir permisos manualmente.
+  static Future<void> openAppSettings() async {
+    try {
+      await _channel.invokeMethod<dynamic>('openAppSettings');
+    } catch (e) {
+      debugPrint('[SafFolderImport] openAppSettings falló: $e');
     }
   }
 

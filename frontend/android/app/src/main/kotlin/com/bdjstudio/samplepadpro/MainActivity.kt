@@ -20,9 +20,6 @@ class MainActivity : FlutterActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val safExecutor = Executors.newSingleThreadExecutor()
 
-    companion object {
-        private const val LEGACY_READ_REQUEST_CODE = 4103
-    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -95,45 +92,74 @@ class MainActivity : FlutterActivity() {
                         result.error("request_failed", e.message, null)
                     }
                 }
+                "openAppSettings" -> {
+                    try {
+                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.parse("package:$packageName")
+                        }
+                        startActivity(intent)
+                        result.success(null)
+                    } catch (e: Exception) {
+                        result.error("settings_failed", e.message, null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
     }
 
+    companion object {
+        private const val STORAGE_REQUEST_CODE = 4103
+    }
+
     /**
-     * Verdadero si la app puede leer almacenamiento compartido con File I/O
-     * directo (dart:io): All-Files-Access en Android 11+, o el permiso
-     * READ_EXTERNAL_STORAGE concedido en versiones anteriores.
+     * Verdadero si la app tiene permiso para acceder a los audios del dispositivo.
+     * En Android 13+ (API 33+) consulta READ_MEDIA_AUDIO.
+     * En Android 6 a 12 (API 23 a 32) consulta READ_EXTERNAL_STORAGE.
+     * En versiones anteriores (API < 23) los permisos se otorgan en la instalación.
      */
     private fun isDirectStorageAccessGranted(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            Environment.isExternalStorageManager()
-        } else {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.READ_MEDIA_AUDIO,
+            ) == PackageManager.PERMISSION_GRANTED
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.READ_EXTERNAL_STORAGE,
             ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
         }
     }
 
-    /** Abre ajustes (11+) o pide el permiso runtime (10-) para lectura completa. */
+    /**
+     * Solicita los permisos adecuados según la versión de Android:
+     * - Android 13+ (API 33+): READ_MEDIA_AUDIO
+     * - Android 10 a 12 (API 29 a 32): READ_EXTERNAL_STORAGE
+     * - Android 9 y anteriores (API <= 28): READ_EXTERNAL_STORAGE + WRITE_EXTERNAL_STORAGE
+     */
     private fun requestDirectStorageAccess() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            try {
-                startActivity(
-                    Intent(
-                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                        Uri.parse("package:$packageName"),
-                    ),
-                )
-            } catch (_: Exception) {
-                startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
-            }
-        } else {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             ActivityCompat.requestPermissions(
                 this,
-                arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE),
-                LEGACY_READ_REQUEST_CODE,
+                arrayOf(Manifest.permission.READ_MEDIA_AUDIO),
+                STORAGE_REQUEST_CODE,
+            )
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val permissions = if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+                arrayOf(
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                )
+            } else {
+                arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+            ActivityCompat.requestPermissions(
+                this,
+                permissions,
+                STORAGE_REQUEST_CODE,
             )
         }
     }

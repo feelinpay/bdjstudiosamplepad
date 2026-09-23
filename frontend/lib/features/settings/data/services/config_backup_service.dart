@@ -45,7 +45,19 @@ class ConfigBackupService {
   /// LocalAudioStorageService para evitar dos definiciones del mismo string.
   static String get _localMediaPrefix => LocalAudioStorageService.prefix;
 
-  static const _nonPortablePreferenceKeys = <String>{};
+  /// Lista blanca estricta de preferencias de usuario portables (apariencia y accesibilidad).
+  /// Cualquier clave que no esté explícitamente en esta lista se descarta por defecto.
+  /// Garantiza que nunca viajen ni se restauren datos de hardware (HWID 'bdj.hwid.v2'),
+  /// licencias ('spp_*', 'bdj.sample_pad.*'), tokens o identificadores de dispositivo.
+  static const _portablePreferencesWhitelist = <String>{
+    'theme_mode',
+    'left_handed',
+    'high_contrast',
+    'font_scale',
+    'snap_to_grid',
+    'app_mode',
+    'enable_pad_shortcuts',
+  };
 
   /// Exporta un .sppbackup autosuficiente y devuelve su ruta.
   static Future<String?> exportAll() async {
@@ -73,9 +85,10 @@ class ConfigBackupService {
 
       final prefs = await SharedPreferences.getInstance();
       final preferences = <String, dynamic>{};
-      for (final key in prefs.getKeys()) {
-        if (!_nonPortablePreferenceKeys.contains(key)) {
-          preferences[key] = prefs.get(key);
+      for (final key in _portablePreferencesWhitelist) {
+        final val = prefs.get(key);
+        if (val != null) {
+          preferences[key] = val;
         }
       }
       final preferencesFile = File(p.join(work.path, 'preferences.json'));
@@ -322,7 +335,11 @@ class ConfigBackupService {
     }
   }
 
+  /// Bandera para notificar a la UI si se tuvo que revertir una restauración fallida.
+  static bool lastRestoreRolledBack = false;
+
   /// Sustituye la base antes de que Isar sea abierto.
+  /// Conserva `.before_restore` hasta que `openAppDatabase()` confirme que abre sin errores.
   static Future<void> applyPendingRestore() async {
     final docs = await AppStorageService.databaseDirectory();
     final pending = File(p.join(docs.path, _pendingDb));
@@ -339,7 +356,7 @@ class ConfigBackupService {
       await pending.rename(database.path);
       databaseWasReplaced = true;
       await appliedMarker.writeAsString('ready', flush: true);
-      if (await rollback.exists()) await rollback.delete();
+      // NO borrar rollback (.before_restore) aquí. Se borra en main.dart tras abrir la base con éxito.
     } catch (_) {
       if (await appliedMarker.exists()) await appliedMarker.delete();
       if (databaseWasReplaced && await database.exists()) {
@@ -352,6 +369,49 @@ class ConfigBackupService {
       }
       // La base anterior queda restaurada para no impedir que la app inicie.
     }
+  }
+
+  /// Borra el respaldo `.before_restore` una vez que `openAppDatabase()` abrió exitosamente.
+  static Future<void> cleanupBeforeRestoreBackup() async {
+    try {
+      final docs = await AppStorageService.databaseDirectory();
+      final rollback = File(p.join(docs.path, '$_dbFileName.before_restore'));
+      if (await rollback.exists()) {
+        await rollback.delete();
+        debugPrint('[ConfigBackupService] Respaldo previo .before_restore limpiado tras arranque exitoso.');
+      }
+    } catch (e) {
+      debugPrint('[ConfigBackupService] Error al limpiar .before_restore: $e');
+    }
+  }
+
+  /// Deshace la sustitución de base de datos restaurando el archivo original `.before_restore`.
+  static Future<bool> rollbackFailedRestore() async {
+    try {
+      final docs = await AppStorageService.databaseDirectory();
+      final database = File(p.join(docs.path, _dbFileName));
+      final rollback = File(p.join(docs.path, '$_dbFileName.before_restore'));
+      final appliedMarker = File(p.join(docs.path, _restoreApplied));
+      final mappingFile = File(p.join(docs.path, _pendingPaths));
+
+      if (await appliedMarker.exists()) await appliedMarker.delete();
+      if (await mappingFile.exists()) await mappingFile.delete();
+
+      if (await rollback.exists()) {
+        if (await database.exists()) {
+          final failedDb = File(p.join(docs.path, '$_dbFileName.failed_restore'));
+          if (await failedDb.exists()) await failedDb.delete();
+          await database.rename(failedDb.path);
+        }
+        await rollback.rename(database.path);
+        lastRestoreRolledBack = true;
+        debugPrint('[ConfigBackupService] Rollback completado: Base de datos previa restaurada intacta.');
+        return true;
+      }
+    } catch (e) {
+      debugPrint('[ConfigBackupService] Error en rollbackFailedRestore: $e');
+    }
+    return false;
   }
 
   /// Reescribe las rutas de medios tras abrir la base restaurada.
@@ -827,7 +887,7 @@ class ConfigBackupService {
     }
     final prefs = await SharedPreferences.getInstance();
     for (final entry in decoded.entries) {
-      if (_nonPortablePreferenceKeys.contains(entry.key)) continue;
+      if (!_portablePreferencesWhitelist.contains(entry.key)) continue;
       final value = entry.value;
       if (value is bool) await prefs.setBool(entry.key, value);
       if (value is int) await prefs.setInt(entry.key, value);

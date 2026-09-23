@@ -32,7 +32,7 @@ class FilesystemSyncService {
       final mediaDir = await AppStorageService.mediaDirectory();
 
       int newItemsCount = 0;
-      final topLevelEntities = mediaDir.listSync();
+      final topLevelEntities = await mediaDir.list().toList();
       final workspaces = await isar.workspaceModels.where().findAll();
       final wsMap = <String, WorkspaceModel>{
         for (final w in workspaces) w.name.trim().toLowerCase(): w,
@@ -262,7 +262,7 @@ class FilesystemSyncService {
       }
     }
 
-    final children = currentDir.listSync()
+    final children = await currentDir.list().toList()
       ..sort((a, b) {
         return p
             .basename(a.path)

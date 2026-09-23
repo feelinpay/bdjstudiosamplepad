@@ -20,7 +20,10 @@ class WorkspaceExporter {
 
   /// Exporta el workspace a un archivo temporal y devuelve su ruta.
   /// Mantiene compatibilidad total con llamadas y tests existentes.
-  Future<String?> exportWorkspace(int workspaceId) async {
+  Future<String?> exportWorkspace(
+    int workspaceId, {
+    void Function(int current, int total)? onProgress,
+  }) async {
     var isar = await dbFuture;
     var workspace = await isar.workspaceModels.get(workspaceId);
     if (workspace == null) return null;
@@ -52,14 +55,24 @@ class WorkspaceExporter {
       }
     }
 
-    var padsMeta = <Map<String, dynamic>>[];
-    var mediaSeen = <String, String>{}; // srcPath -> mediaName
-
+    // Pre-cargar pads para saber el total de elementos a exportar
+    final pagesWithPads = <(PageModel, List<PadModel>)>[];
+    var totalPads = 0;
     for (var page in pages) {
       var pads = await isar.padModels
           .filter()
           .page((q) => q.idEqualTo(page.id))
           .findAll();
+      pagesWithPads.add((page, pads));
+      totalPads += pads.length;
+    }
+    onProgress?.call(0, totalPads > 0 ? totalPads : 1);
+
+    var padsMeta = <Map<String, dynamic>>[];
+    var mediaSeen = <String, String>{}; // srcPath -> mediaName
+    var processedPads = 0;
+
+    for (final (page, pads) in pagesWithPads) {
       for (var pad in pads) {
         String? mediaName;
         if (pad.samplePath != null && pad.samplePath!.isNotEmpty) {
@@ -73,22 +86,6 @@ class WorkspaceExporter {
               mediaName = '${mediaSeen.length}_${src.uri.pathSegments.last}';
               await src.copy('${mediaDir.path}/$mediaName');
               mediaSeen[pad.samplePath!] = mediaName;
-            }
-          }
-        }
-
-        String? imageName;
-        if (pad.backgroundImagePath != null && pad.backgroundImagePath!.isNotEmpty) {
-          final resolved = await LocalAudioStorageService.resolvePath(
-            pad.backgroundImagePath!,
-          );
-          var src = File(resolved);
-          if (await src.exists()) {
-            imageName = mediaSeen[pad.backgroundImagePath!];
-            if (imageName == null) {
-              imageName = 'img_${mediaSeen.length}_${src.uri.pathSegments.last}';
-              await src.copy('${mediaDir.path}/$imageName');
-              mediaSeen[pad.backgroundImagePath!] = imageName;
             }
           }
         }
@@ -109,13 +106,15 @@ class WorkspaceExporter {
           'isProtected': pad.isProtected,
           'reverse': pad.reverse,
           'media': mediaName,
-          'image': imageName,
           'fadeInMs': pad.fadeInMs,
           'fadeOutMs': pad.fadeOutMs,
           'startPointMs': pad.startPointMs,
           'endPointMs': pad.endPointMs,
           'loopPointMs': pad.loopPointMs,
         });
+
+        processedPads++;
+        onProgress?.call(processedPads, totalPads > 0 ? totalPads : 1);
       }
     }
 
@@ -157,7 +156,10 @@ class WorkspaceExporter {
 
   /// Exporta el workspace solicitando la ruta de guardado al usuario
   /// mediante [FilePicker.saveFile]. Retorna la ruta final elegida o null si cancela.
-  Future<String?> exportWorkspaceWithPicker({required int workspaceId}) async {
+  Future<String?> exportWorkspaceWithPicker({
+    required int workspaceId,
+    void Function(int current, int total)? onProgress,
+  }) async {
     final isar = await dbFuture;
     final workspace = await isar.workspaceModels.get(workspaceId);
     if (workspace == null) return null;
@@ -178,7 +180,10 @@ class WorkspaceExporter {
         ? output
         : '$output.sppworkspace';
 
-    final tempExportPath = await exportWorkspace(workspaceId);
+    final tempExportPath = await exportWorkspace(
+      workspaceId,
+      onProgress: onProgress,
+    );
     if (tempExportPath == null) return null;
 
     final tempFile = File(tempExportPath);

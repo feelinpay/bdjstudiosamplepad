@@ -11,6 +11,7 @@ import '../../../settings/presentation/providers/settings_provider.dart';
 import '../../../desktop/presentation/providers/desktop_providers.dart';
 import '../../../../core/providers/ui_providers.dart';
 import '../../../../core/utils/concurrency_shield.dart';
+import '../../../../core/platform/device_tier.dart';
 
 class PadButton extends ConsumerWidget {
   final PadEntity pad;
@@ -22,8 +23,6 @@ class PadButton extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     var isPlaying = pad.state == PadState.playing;
     var isQueued = pad.state == PadState.queued;
-    var hasBackground =
-        pad.backgroundImagePath != null && pad.backgroundImagePath!.isNotEmpty;
     var isHighContrast = ref.watch(
       settingsProvider.select((s) => s.highContrast),
     );
@@ -43,6 +42,7 @@ class PadButton extends ConsumerWidget {
 
     var isEditMode = ref.watch(isEditModeProvider);
     final isMobile = Platform.isAndroid || Platform.isIOS;
+    final reducedGpu = DeviceTierDetector.reducedGpuEffects;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -94,12 +94,19 @@ class PadButton extends ConsumerWidget {
               ref.read(padPageProvider(pageIndex).notifier).onPadUp(pad.id);
             } catch (_) {}
           },
-          child: RepaintBoundary(
-            child: Container(
-              margin: const EdgeInsets.all(5),
+          child: Container(
+            margin: const EdgeInsets.all(5),
               decoration: BoxDecoration(
-                color: hasBackground ? baseColor : null,
-                gradient: hasBackground
+                color: reducedGpu
+                    ? (isPlaying
+                        ? Color.lerp(baseColor, Colors.white, 0.35)!
+                        : isQueued
+                            ? baseColor.withValues(alpha: 0.85)
+                            : (hasSample || isFolder)
+                                ? baseColor
+                                : const Color(0xFF20242D))
+                    : null,
+                gradient: reducedGpu
                     ? null
                     : LinearGradient(
                         begin: Alignment.topLeft,
@@ -136,7 +143,7 @@ class PadButton extends ConsumerWidget {
                   width: isPlaying ? 2.5 : 1.5,
                 ),
                 boxShadow: isPlaying
-                    ? (isMobile
+                    ? (isMobile || reducedGpu
                           ? [
                               BoxShadow(
                                 color: baseColor.withValues(alpha: 0.6),
@@ -157,7 +164,7 @@ class PadButton extends ConsumerWidget {
                                 spreadRadius: 1,
                               ),
                             ])
-                    : (isMobile
+                    : (isMobile || reducedGpu
                           ? null
                           : [
                               BoxShadow(
@@ -166,47 +173,25 @@ class PadButton extends ConsumerWidget {
                                 offset: const Offset(0, 3),
                               ),
                             ]),
-                image: hasBackground
-                    ? DecorationImage(
-                        image: FileImage(File(pad.backgroundImagePath!)),
-                        fit: BoxFit.cover,
-                        opacity: isPlaying ? 0.8 : 0.45,
-                      )
-                    : null,
               ),
               child: Stack(
                 children: [
-                  Container(
-                    decoration: hasBackground
-                        ? BoxDecoration(
-                            borderRadius: BorderRadius.circular(14),
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [
-                                Colors.black.withValues(alpha: 0.3),
-                                Colors.black.withValues(alpha: 0.75),
-                              ],
-                            ),
-                          )
-                        : null,
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 6,
-                        ),
-                        child: _buildContent(
-                          showIcon: showIcon,
-                          dynamicIconSize: dynamicIconSize,
-                          dynamicFontSize: dynamicFontSize,
-                          maxLines: maxLines,
-                          isHighContrast: isHighContrast,
-                          isPlaying: isPlaying,
-                          hasSample: hasSample,
-                          isFolder: isFolder,
-                          minDim: minDim,
-                        ),
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 6,
+                      ),
+                      child: _buildContent(
+                        showIcon: showIcon,
+                        dynamicIconSize: dynamicIconSize,
+                        dynamicFontSize: dynamicFontSize,
+                        maxLines: maxLines,
+                        isHighContrast: isHighContrast,
+                        isPlaying: isPlaying,
+                        hasSample: hasSample,
+                        isFolder: isFolder,
+                        minDim: minDim,
                       ),
                     ),
                   ),
@@ -319,9 +304,8 @@ class PadButton extends ConsumerWidget {
                 ],
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
     );
   }
 

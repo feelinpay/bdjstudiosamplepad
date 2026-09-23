@@ -8,6 +8,7 @@ import '../providers/pad_providers.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../../../core/services/saf_folder_import_service.dart';
 import '../../../../core/utils/concurrency_shield.dart';
+import '../../../../core/widgets/blocking_progress_dialog.dart';
 import '../../../workspace/presentation/providers/workspace_providers.dart';
 import '../../../workspace/data/models/workspace_model.dart';
 
@@ -256,51 +257,67 @@ class PadAddActions {
 
       final paths = <String>[];
       final names = <String>[];
+      final totalFiles = result.files.length;
 
-      // Copiar en lotes paralelos (no 1 a 1) para que la importación de
-      // muchos archivos no tarde tanto: 4 copias concurrentes por tanda.
-      const batchSize = 4;
-      for (var start = 0; start < result.files.length; start += batchSize) {
-        final end = (start + batchSize).clamp(0, result.files.length);
-        final batch = result.files.sublist(start, end);
-        final batchResults = await Future.wait(
-          batch.map((f) async {
-            try {
-              if (f.path != null && f.path!.isNotEmpty) {
-                final path = await LocalAudioStorageService.importAudioFile(
-                  f.path!,
-                );
-                return (path, f.name.replaceAll(RegExp(r'\.[^.]+$'), ''));
-              } else if (f.bytes != null && f.bytes!.isNotEmpty) {
-                final path = await LocalAudioStorageService.importAudioBytes(
-                  f.name,
-                  f.bytes!,
-                );
-                return (path, f.name.replaceAll(RegExp(r'\.[^.]+$'), ''));
+      await BlockingProgressDialog.run(
+        context,
+        title: 'Importando audios...',
+        initialMessage: 'Preparando $totalFiles archivo(s)...',
+        task: (progress) async {
+          // Copiar en lotes paralelos (no 1 a 1) para que la importación de
+          // muchos archivos no tarde tanto: 4 copias concurrentes por tanda.
+          const batchSize = 4;
+          for (var start = 0; start < result.files.length; start += batchSize) {
+            final end = (start + batchSize).clamp(0, result.files.length);
+            final batch = result.files.sublist(start, end);
+            final batchResults = await Future.wait(
+              batch.map((f) async {
+                try {
+                  if (f.path != null && f.path!.isNotEmpty) {
+                    final path = await LocalAudioStorageService.importAudioFile(
+                      f.path!,
+                    );
+                    return (path, f.name.replaceAll(RegExp(r'\.[^.]+$'), ''));
+                  } else if (f.bytes != null && f.bytes!.isNotEmpty) {
+                    final path = await LocalAudioStorageService.importAudioBytes(
+                      f.name,
+                      f.bytes!,
+                    );
+                    return (path, f.name.replaceAll(RegExp(r'\.[^.]+$'), ''));
+                  }
+                } catch (error, st) {
+                  debugPrint(
+                    '[PadAddActions] Fallo al importar "${f.name}": $error\n$st',
+                  );
+                }
+                return null;
+              }),
+            );
+            for (final r in batchResults) {
+              if (r != null) {
+                paths.add(r.$1);
+                names.add(r.$2);
               }
-            } catch (error, st) {
-              debugPrint(
-                '[PadAddActions] Fallo al importar "${f.name}": $error\n$st',
-              );
             }
-            return null;
-          }),
-        );
-        for (final r in batchResults) {
-          if (r != null) {
-            paths.add(r.$1);
-            names.add(r.$2);
+            progress.updateProgress(
+              paths.length,
+              totalFiles,
+              'Copiando audios...',
+            );
+            await Future<void>.delayed(Duration.zero);
           }
-        }
-        await Future<void>.delayed(Duration.zero);
-      }
 
-      if (paths.isEmpty) return;
+          if (paths.isEmpty) return;
 
-      await notifier.addPads(
-        paths.length,
-        samplePaths: paths,
-        sampleNames: names,
+          progress.update(
+            message: 'Creando pads para ${paths.length} audio(s)...',
+          );
+          await notifier.addPads(
+            paths.length,
+            samplePaths: paths,
+            sampleNames: names,
+          );
+        },
       );
     });
   }
@@ -747,74 +764,35 @@ class PadAddActions {
     BuildContext context, [
     ValueListenable<int>? copiedFiles,
   ]) {
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => PopScope(
-        canPop: false,
-        child: AlertDialog(
-          content: Row(
-            children: [
-              const SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Analizando carpeta de audios...'),
-                    if (copiedFiles != null)
-                      ValueListenableBuilder<int>(
-                        valueListenable: copiedFiles,
-                        builder: (_, count, __) => Padding(
-                          padding: const EdgeInsets.only(top: 6),
-                          child: Text(
-                            count > 0
-                                ? '$count archivo(s) copiado(s)...'
-                                : 'Copiando audios...',
-                            style: const TextStyle(
-                              color: Colors.white54,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    final controller = BlockingProgressController(
+      initialMessage: 'Analizando carpeta de audios...',
+    );
+    if (copiedFiles != null) {
+      copiedFiles.addListener(() {
+        final count = copiedFiles.value;
+        controller.updateCount(
+          count,
+          count > 0 ? 'Copiando audios...' : 'Analizando carpeta...',
+        );
+      });
+    }
+    BlockingProgressDialog.show(
+      context,
+      title: 'Analizando carpeta de audios...',
+      controller: controller,
     );
   }
 
   /// La importación cambia Isar y copia archivos. Durante esa transacción la
   /// interfaz no debe permitir navegar ni editar un estado intermedio.
   static void _showImportingDialog(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const PopScope(
-        canPop: false,
-        child: AlertDialog(
-          content: Row(
-            children: [
-              SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              SizedBox(width: 16),
-              Expanded(child: Text('Importando carpeta y guardando audios...')),
-            ],
-          ),
-        ),
-      ),
+    final controller = BlockingProgressController(
+      initialMessage: 'Guardando audios y configurando pads...',
+    );
+    BlockingProgressDialog.show(
+      context,
+      title: 'Importando carpeta...',
+      controller: controller,
     );
   }
 

@@ -56,7 +56,57 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
 ; shared_preferences.json y el almacén cifrado (flutter_secure_storage.dat), y
 ; los nombres que usaban versiones antiguas.
 [UninstallDelete]
+; Datos principales (Roaming — getApplicationSupportDirectory)
 Type: filesandordirs; Name: "{userappdata}\BDJ Studio\BDJ Studio Sample Pad"
 Type: filesandordirs; Name: "{userappdata}\BDJ Studio\bdj_studio_sample_pad"
 Type: filesandordirs; Name: "{userappdata}\BDJ Studio Sample Pad"
 Type: filesandordirs; Name: "{userappdata}\bdj_studio_sample_pad"
+; Caché y métricas de Flutter (Local — %LOCALAPPDATA%)
+Type: filesandordirs; Name: "{localappdata}\BDJ Studio\BDJ Studio Sample Pad"
+Type: filesandordirs; Name: "{localappdata}\BDJ Studio\bdj_studio_sample_pad"
+
+[Code]
+// Eliminación forzada y recursiva de todos los datos en AppData al desinstalar.
+// [UninstallDelete] solo borra carpetas si ya están vacías; DelTree borra
+// recursivamente todo el árbol de archivos (Isar DB, samples, prefs, licencias).
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  DataDir: String;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    // 1. Borrar carpeta principal en Roaming (%APPDATA%\BDJ Studio\BDJ Studio Sample Pad)
+    DataDir := ExpandConstant('{userappdata}\BDJ Studio\BDJ Studio Sample Pad');
+    if DirExists(DataDir) then
+      DelTree(DataDir, True, True, True);
+
+    // 2. Rutas heredadas o alternativas en Roaming
+    DataDir := ExpandConstant('{userappdata}\BDJ Studio\bdj_studio_sample_pad');
+    if DirExists(DataDir) then
+      DelTree(DataDir, True, True, True);
+
+    DataDir := ExpandConstant('{userappdata}\BDJ Studio Sample Pad');
+    if DirExists(DataDir) then
+      DelTree(DataDir, True, True, True);
+
+    DataDir := ExpandConstant('{userappdata}\bdj_studio_sample_pad');
+    if DirExists(DataDir) then
+      DelTree(DataDir, True, True, True);
+
+    // 3. Borrar carpetas de caché y métricas en Local (%LOCALAPPDATA%)
+    DataDir := ExpandConstant('{localappdata}\BDJ Studio\BDJ Studio Sample Pad');
+    if DirExists(DataDir) then
+      DelTree(DataDir, True, True, True);
+
+    DataDir := ExpandConstant('{localappdata}\BDJ Studio\bdj_studio_sample_pad');
+    if DirExists(DataDir) then
+      DelTree(DataDir, True, True, True);
+
+    // 4. Limpieza de carpetas de marca padre:
+    // RemoveDir SOLO tiene éxito si la carpeta está completamente vacía.
+    // Si contiene otras aplicaciones (Search Pro, Wave Video, etc.),
+    // RemoveDir falla silenciosamente y NO borra nada, protegiendo las demás apps.
+    RemoveDir(ExpandConstant('{userappdata}\BDJ Studio'));
+    RemoveDir(ExpandConstant('{localappdata}\BDJ Studio'));
+  end;
+end;
