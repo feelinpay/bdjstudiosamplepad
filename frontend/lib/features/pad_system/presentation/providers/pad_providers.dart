@@ -289,9 +289,13 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     await page.pads.load();
     final targetPage = page;
 
+    final existingPads = await isar.padModels
+        .filter()
+        .page((q) => q.idEqualTo(targetPage.id))
+        .findAll();
     int newId = 0;
-    if (page.pads.isNotEmpty) {
-      newId = page.pads.map((p) => p.padId).reduce((a, b) => a > b ? a : b) + 1;
+    if (existingPads.isNotEmpty) {
+      newId = existingPads.map((p) => p.padId).reduce((a, b) => a > b ? a : b) + 1;
     }
 
     var colors = AppColors.padPalette;
@@ -811,10 +815,13 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     var colors = AppColors.audioPadPalette;
 
     await isar.writeTxn(() async {
-      await page.pads.load();
-      var nextPadId = page.pads.isEmpty
+      final existingPads = await isar.padModels
+          .filter()
+          .page((q) => q.idEqualTo(page.id))
+          .findAll();
+      var nextPadId = existingPads.isEmpty
           ? 0
-          : page.pads.map((c) => c.padId).reduce((a, b) => a > b ? a : b) + 1;
+          : existingPads.map((c) => c.padId).reduce((a, b) => a > b ? a : b) + 1;
       var models = <PadModel>[];
       for (var i = 0; i < count; i++) {
         var path = (samplePaths != null && i < samplePaths.length)
@@ -836,6 +843,8 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       for (var m in models) {
         await m.page.save();
       }
+      page.pads.addAll(models);
+      await page.pads.save();
       // Localized update: append only the new pads instead of invalidating the
       // whole workspace (avoids reloading every page + the active workspace).
       final current = state.value ?? [];
@@ -849,7 +858,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     var page = await _pageForIndex(arg);
     var workspace = await ref.read(currentWorkspaceProvider.future);
     if (page == null || workspace == null) return;
-    var hiddenIndex = await _nextHiddenPageIndex();
+    var hiddenIndex = await _nextHiddenPageIndexFromDatabase(isar, workspace.id);
 
     final addedModels = <PadModel>[];
     await isar.writeTxn(() async {
@@ -862,10 +871,13 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       await isar.pageModels.put(hidden);
       await hidden.workspace.save();
 
-      await page.pads.load();
-      var nextPadId = page.pads.isEmpty
+      final existingPads = await isar.padModels
+          .filter()
+          .page((q) => q.idEqualTo(page.id))
+          .findAll();
+      var nextPadId = existingPads.isEmpty
           ? 0
-          : page.pads.map((c) => c.padId).reduce((a, b) => a > b ? a : b) + 1;
+          : existingPads.map((c) => c.padId).reduce((a, b) => a > b ? a : b) + 1;
       var m = PadModel()
         ..padId = nextPadId
         ..label = name
@@ -876,6 +888,8 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
         ..page.value = page;
       await isar.padModels.put(m);
       await m.page.save();
+      page.pads.add(m);
+      await page.pads.save();
       addedModels.add(m);
     });
     final parentPath = await _getFolderPath(isar, arg);

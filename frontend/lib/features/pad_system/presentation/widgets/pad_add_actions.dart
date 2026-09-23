@@ -161,34 +161,158 @@ class PadAddActions {
   static Future<void> _askPadCount(BuildContext context, WidgetRef ref) async {
     var pageIndex = ref.read(currentPageIndexProvider);
     var notifier = ref.read(padPageProvider(pageIndex).notifier);
+    final textController = TextEditingController();
 
-    var options = [1, 2, 4, 8, 12, 16];
-    var count = await showDialog<int>(
-      context: context,
-      builder: (ctx) => SimpleDialog(
-        backgroundColor: Colors.grey[900],
-        title: const Text(
-          'Cuantos pads quieres agregar?',
-          style: TextStyle(color: Colors.white),
-        ),
-        children: options
-            .map(
-              (n) => SimpleDialogOption(
-                onPressed: () => ConcurrencyShield.safePop(ctx, n),
-                child: Text(
-                  '$n pads',
-                  style: const TextStyle(
-                    color: Colors.blueAccent,
-                    fontSize: 16,
+    try {
+      final count = await showDialog<int>(
+        context: context,
+        builder: (ctx) {
+          int? selectedPreset;
+          return StatefulBuilder(
+            builder: (context, setState) {
+              return AlertDialog(
+                backgroundColor: Colors.grey[900],
+                title: const Row(
+                  children: [
+                    Icon(Icons.grid_on, color: Colors.cyanAccent, size: 22),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Agregar pads vacíos',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Selecciona una cantidad rápida:',
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [4, 8, 16, 24, 32, 64].map((n) {
+                          final isSelected = selectedPreset == n;
+                          return ActionChip(
+                            backgroundColor: isSelected
+                                ? Colors.cyanAccent
+                                : Colors.grey[850],
+                            side: BorderSide(
+                              color: isSelected
+                                  ? Colors.cyanAccent
+                                  : Colors.white24,
+                            ),
+                            label: Text(
+                              '+$n pads',
+                              style: TextStyle(
+                                color: isSelected ? Colors.black : Colors.white,
+                                fontWeight: isSelected
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                selectedPreset = n;
+                                textController.text = n.toString();
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 18),
+                      const Text(
+                        'O escribe cualquier cantidad (sin límites):',
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: textController,
+                        keyboardType: TextInputType.number,
+                        autofocus: false,
+                        style: const TextStyle(color: Colors.white, fontSize: 16),
+                        decoration: InputDecoration(
+                          hintText: 'Ej. 20, 50, 100...',
+                          hintStyle: const TextStyle(color: Colors.white38),
+                          filled: true,
+                          fillColor: Colors.black26,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 12,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(color: Colors.white24),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(color: Colors.cyanAccent),
+                          ),
+                          suffixText: 'pads',
+                          suffixStyle: const TextStyle(color: Colors.white54),
+                        ),
+                        onChanged: (val) {
+                          setState(() {
+                            selectedPreset = int.tryParse(val);
+                          });
+                        },
+                      ),
+                    ],
                   ),
                 ),
-              ),
-            )
-            .toList(),
-      ),
-    );
-    if (count != null) {
-      await notifier.addPads(count);
+                actions: [
+                  TextButton(
+                    onPressed: () => ConcurrencyShield.safePop(ctx, null),
+                    child: const Text(
+                      'Cancelar',
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.cyanAccent,
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 10,
+                      ),
+                    ),
+                    onPressed: () {
+                      final val = int.tryParse(textController.text.trim());
+                      if (val != null && val > 0) {
+                        ConcurrencyShield.safePop(ctx, val);
+                      }
+                    },
+                    child: const Text(
+                      'Agregar',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+
+      if (count != null && count > 0) {
+        await notifier.addPads(count);
+      }
+    } finally {
+      Future<void>.delayed(
+        const Duration(milliseconds: 300),
+        textController.dispose,
+      );
     }
   }
 

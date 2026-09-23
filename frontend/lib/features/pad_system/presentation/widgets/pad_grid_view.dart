@@ -49,23 +49,27 @@ class PadGridView extends ConsumerWidget {
           padSize: padSize,
         );
 
-        return GridView.builder(
-          key: PageStorageKey<int>(pageIndex),
-          physics: const BouncingScrollPhysics(),
-          addAutomaticKeepAlives: false,
-          addRepaintBoundaries: true,
-          padding: EdgeInsets.all(layout.padding),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: layout.columns,
-            childAspectRatio: layout.aspectRatio,
-            crossAxisSpacing: layout.spacing,
-            mainAxisSpacing: layout.spacing,
-          ),
-          itemCount: allPads.length,
-          itemBuilder: (context, i) => _PadCell(
-            key: ValueKey<String>(allPads[i].id),
-            pad: allPads[i],
-            pageIndex: pageIndex,
+        return Scrollbar(
+          thumbVisibility: true,
+          interactive: true,
+          child: GridView.builder(
+            key: PageStorageKey<int>(pageIndex),
+            physics: const BouncingScrollPhysics(),
+            addAutomaticKeepAlives: false,
+            addRepaintBoundaries: true,
+            padding: EdgeInsets.all(layout.padding),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: layout.columns,
+              childAspectRatio: layout.aspectRatio,
+              crossAxisSpacing: layout.spacing,
+              mainAxisSpacing: layout.spacing,
+            ),
+            itemCount: allPads.length,
+            itemBuilder: (context, i) => _PadCell(
+              key: ValueKey<String>(allPads[i].id),
+              pad: allPads[i],
+              pageIndex: pageIndex,
+            ),
           ),
         );
       },
