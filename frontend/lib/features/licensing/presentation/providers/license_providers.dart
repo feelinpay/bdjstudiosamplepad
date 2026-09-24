@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import '../../../../core/licensing/licensing_port.dart';
@@ -23,7 +24,7 @@ final licenseManagerProvider = Provider<LicenseManager>((ref) {
   );
 });
 
-enum LicenseLoadingState { initial, loading, licensed, unlicensed, error }
+enum LicenseLoadingState { initial, loading, licensed, unlicensed, error, timeout }
 
 class LicenseState {
   final LicenseLoadingState loadingState;
@@ -81,21 +82,31 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
   /// activación con mensaje y el usuario puede reintentar.
   static const _checkBudget = Duration(seconds: 12);
 
-  LicenseNotifier(this._manager) : super(const LicenseState()) {
-    _checkLicense();
+  LicenseNotifier(this._manager, {Future<Result<LicenseInfo>>? preloaded})
+      : super(const LicenseState()) {
+    _checkLicense(preloaded: preloaded);
   }
 
-  Future<void> _checkLicense() async {
+  Future<void> _checkLicense({Future<Result<LicenseInfo>>? preloaded}) async {
     state = state.copyWith(loadingState: LicenseLoadingState.loading);
 
     final Result<LicenseInfo> result;
     try {
-      result = await _manager.validateLicense().timeout(_checkBudget);
+      final future = preloaded ?? _manager.validateLicense();
+      result = await future.timeout(_checkBudget);
+    } on TimeoutException {
+      state = state.copyWith(
+        loadingState: LicenseLoadingState.timeout,
+        status: _manager.currentStatus,
+        error: 'La verificación de licencia tardó demasiado. '
+            'Revisa el dispositivo e inténtalo de nuevo.',
+      );
+      return;
     } catch (e) {
       state = state.copyWith(
         loadingState: LicenseLoadingState.error,
         status: _manager.currentStatus,
-        error: 'La verificación de licencia tardó demasiado. '
+        error: 'Error al verificar la licencia. '
             'Revisa el dispositivo e inténtalo de nuevo.',
       );
       return;

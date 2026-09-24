@@ -1,11 +1,20 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:bdj_license_core/bdj_license_core.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'security_port.dart';
+import '../platform/process_runner.dart';
+
+class _PersistedFingerprint {
+  final String f;
+  final String s;
+  const _PersistedFingerprint({required this.f, required this.s});
+}
 
 /// Genera la huella de dispositivo (HWID) siguiendo el estándar bdj_license_core V2,
 /// basada en identificadores de hardware físicos inmutables que persisten ante formateos.
@@ -30,6 +39,9 @@ class DeviceFingerprint {
 
   /// Clave compartida para el registro persistente (HWID + firma de estabilidad).
   static const String persistedKey = 'bdj.hwid.v2';
+
+  /// Callback invocado si la revalidación en segundo plano detecta un cambio de hardware.
+  static VoidCallback? onFingerprintChanged;
 
   final Future<String?> Function()? _readPersisted;
   final Future<void> Function(String value)? _writePersisted;
@@ -68,33 +80,71 @@ class DeviceFingerprint {
     }
   }
 
+  Future<_PersistedFingerprint?> _readPersistedRecord() async {
+    final reader = _readPersisted;
+    if (reader == null) return null;
+    try {
+      final stored = await reader();
+      if (stored != null && stored.isNotEmpty) {
+        final record = jsonDecode(stored);
+        if (record is Map<String, dynamic>) {
+          final f = record['f'];
+          final s = record['s'];
+          if (f is String && f.isNotEmpty && s is String && s.isNotEmpty) {
+            return _PersistedFingerprint(f: f, s: s);
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _revalidateInBackground(_PersistedFingerprint persisted) async {
+    try {
+      final result = await generateResult();
+      if (result.stabilitySignature != persisted.s) {
+        _cachedFingerprint = result.visibleHwid;
+        final writer = _writePersisted;
+        if (writer != null) {
+          await writer(
+            jsonEncode(<String, String>{
+              'f': result.visibleHwid,
+              's': result.stabilitySignature,
+            }),
+          );
+        }
+        onFingerprintChanged?.call();
+      }
+    } catch (_) {}
+  }
+
   Future<String> generate() async {
     if (_cachedFingerprint != null) return _cachedFingerprint!;
+
+    if (Platform.isWindows) {
+      final persisted = await _readPersistedRecord();
+      if (persisted != null) {
+        _cachedFingerprint = persisted.f;
+        unawaited(_revalidateInBackground(persisted));
+        return persisted.f;
+      }
+    }
+
     final result = await generateResult();
     _cachedFingerprint = await _resolvePersisted(result);
     return _cachedFingerprint!;
   }
 
   Future<String> _resolvePersisted(HwidResult result) async {
-    if (_readPersisted == null || _writePersisted == null) return result.visibleHwid;
-    try {
-      final stored = await _readPersisted();
-      if (stored != null && stored.isNotEmpty) {
-        final record = jsonDecode(stored);
-        if (record is Map<String, dynamic>) {
-          final storedFp = record['f'];
-          final storedSig = record['s'];
-          if (storedFp is String &&
-              storedFp.isNotEmpty &&
-              storedSig == result.stabilitySignature) {
-            return storedFp;
-          }
-        }
-      }
-    } catch (_) {}
+    final writer = _writePersisted;
+    if (_readPersisted == null || writer == null) return result.visibleHwid;
+    final persisted = await _readPersistedRecord();
+    if (persisted != null && persisted.s == result.stabilitySignature) {
+      return persisted.f;
+    }
 
     try {
-      await _writePersisted(
+      await writer(
         jsonEncode(<String, String>{
           'f': result.visibleHwid,
           's': result.stabilitySignature,
@@ -189,7 +239,7 @@ class DeviceFingerprint {
 
   Future<Map<String, String>> _getWindowsHardwareIds() async {
     try {
-      final result = await Process.run(
+      final result = await runProcessWithTimeout(
         'powershell',
         [
           '-NoProfile',
@@ -197,9 +247,10 @@ class DeviceFingerprint {
           '-Command',
           r'$p = Get-CimInstance Win32_ComputerSystemProduct; $c = Get-CimInstance Win32_Processor; $b = Get-CimInstance Win32_BaseBoard; "$($p.UUID)`n$($c.ProcessorId)`n$($b.SerialNumber)"',
         ],
+        const Duration(seconds: 8),
       );
 
-      if (result.exitCode == 0) {
+      if (result != null && result.exitCode == 0) {
         final lines = (result.stdout as String)
             .split(RegExp(r'\r?\n'))
             .map((l) => l.trim())

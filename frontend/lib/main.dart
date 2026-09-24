@@ -27,6 +27,11 @@ import 'features/settings/presentation/providers/settings_provider.dart';
 import 'features/desktop/data/key_binding_service.dart';
 import 'features/desktop/presentation/providers/desktop_providers.dart';
 import 'l10n/app_localizations.dart';
+import 'core/errors/failures.dart';
+import 'core/licensing/licensing_port.dart';
+import 'core/security/secure_storage_impl.dart';
+import 'core/licensing/license_manager.dart';
+import 'core/security/device_fingerprint.dart';
 import 'core/services/crash_log_service.dart';
 import 'core/security/keychain_ci_smoke.dart';
 import 'core/diagnostics/startup_timeline.dart';
@@ -54,12 +59,19 @@ class _AppServices {
   final SoLoudAudioEngine audio;
   final KeyBindingService keyBindings;
   final AudioInitializationResult audioInitResult;
-  const _AppServices(
-    this.settings,
-    this.audio,
-    this.keyBindings,
-    this.audioInitResult,
-  );
+  final SecureStorageImpl secureStorage;
+  final LicenseManager licenseManager;
+  final Future<Result<LicenseInfo>> licenseCheck;
+
+  const _AppServices({
+    required this.settings,
+    required this.audio,
+    required this.keyBindings,
+    required this.audioInitResult,
+    required this.secureStorage,
+    required this.licenseManager,
+    required this.licenseCheck,
+  });
 }
 
 /// Muestra la ventana AL INSTANTE con un splash mientras el arranque pesado
@@ -194,6 +206,14 @@ class _BootstrapAppState extends State<_BootstrapApp> {
     ]);
     StartupTimeline.mark('phase2');
 
+    // Tras la Fase 2: validación de licencia en paralelo con la base de datos
+    final secureStorage = SecureStorageImpl();
+    final licenseManager = LicenseManager(
+      secureStorage: secureStorage,
+      fingerprint: DeviceFingerprint.withPersistentStorage(secureStorage),
+    );
+    final licenseCheck = licenseManager.validateLicense(); // sin await aquí
+
     try {
       GestureBinding.instance.resamplingEnabled = false;
     } catch (_) {}
@@ -270,10 +290,13 @@ class _BootstrapAppState extends State<_BootstrapApp> {
 
     _updateStatus('¡Listo!');
     return _AppServices(
-      settingsService,
-      audioEngine,
-      KeyBindingService(prefs),
-      audioInitResult,
+      settings: settingsService,
+      audio: audioEngine,
+      keyBindings: KeyBindingService(prefs),
+      audioInitResult: audioInitResult,
+      secureStorage: secureStorage,
+      licenseManager: licenseManager,
+      licenseCheck: licenseCheck,
     );
   }
 
@@ -324,6 +347,14 @@ class _BootstrapAppState extends State<_BootstrapApp> {
             keyBindingServiceProvider.overrideWithValue(services.keyBindings),
             audioInitializationCacheProvider.overrideWith(
               (ref) => services.audioInitResult,
+            ),
+            secureStorageProvider.overrideWithValue(services.secureStorage),
+            licenseManagerProvider.overrideWithValue(services.licenseManager),
+            licenseProvider.overrideWith(
+              (ref) => LicenseNotifier(
+                ref.read(licenseManagerProvider),
+                preloaded: services.licenseCheck,
+              ),
             ),
           ],
           child: const SamplePadProApp(),
@@ -493,6 +524,12 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
+    DeviceFingerprint.onFingerprintChanged = () {
+      if (mounted) {
+        ref.read(licenseProvider.notifier).sync();
+      }
+    };
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       StartupTimeline.mark('firstAppFrame');
       ref.read(librarySyncProvider.future).then((changed) {
@@ -522,6 +559,7 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
 
   @override
   void dispose() {
+    DeviceFingerprint.onFingerprintChanged = null;
     WidgetsBinding.instance.removeObserver(this);
     ref.read(audioEngineProvider).dispose();
     FilesystemSyncService.stopLiveWatcher();
@@ -597,6 +635,51 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
         {
           return const ActivationScreen();
         }
+      case LicenseLoadingState.timeout:
+        return Scaffold(
+          backgroundColor: const Color(0xFF151522),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(28.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.timer_off_rounded,
+                    color: Colors.amberAccent,
+                    size: 56,
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'No se pudo verificar la licencia',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 19,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    licenseState.error ??
+                        'La verificación de licencia tardó demasiado tiempo.',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  FilledButton.icon(
+                    onPressed: () => ref.read(licenseProvider.notifier).sync(),
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Reintentar'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
     }
   }
 }

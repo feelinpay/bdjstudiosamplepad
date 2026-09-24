@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'process_runner.dart';
 
 /// GPU families known to have issues with Flutter's ANGLE/Skia pipeline.
 /// These GPUs only support DirectX 10.1 or lower, causing ANGLE to fall back
@@ -115,16 +116,17 @@ class DeviceTierDetector {
   /// legacy pattern. Timeout-guarded so it never delays startup > 3 s.
   static Future<void> _detectWindowsGpu() async {
     try {
-      final result = await Process.run(
+      final result = await runProcessWithTimeout(
         'powershell',
         [
           '-NoProfile', '-NonInteractive', '-Command',
           'Get-CimInstance Win32_VideoController '
               '| Select-Object -ExpandProperty Name',
         ],
-      ).timeout(const Duration(seconds: 3));
+        const Duration(seconds: 3),
+      );
 
-      if (result.exitCode != 0) return;
+      if (result == null || result.exitCode != 0) return;
 
       final gpuName = (result.stdout as String).trim().toLowerCase();
       debugPrint('[DeviceTier] Windows GPU: $gpuName');
