@@ -1,25 +1,31 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'process_runner.dart';
 
-/// GPU families known to have issues with Flutter's ANGLE/Skia pipeline.
-/// These GPUs only support DirectX 10.1 or lower, causing ANGLE to fall back
-/// to WARP (software) where gradient shaders may fail and render white.
-const _legacyGpuPatterns = [
-  'hd graphics 3000', // Sandy Bridge (2011) — DX 10.1
-  'hd graphics 2000', // Sandy Bridge (2011) — DX 10.1
-  'hd graphics',      // Pre-Sandy Bridge (Arrandale, etc.) — DX 10.0
-  'gma',              // Intel GMA (very old)
-  'radeon hd 6',      // Radeon HD 6000 series — DX 11 but very old drivers
-  'radeon hd 5',      // Radeon HD 5000 series
-  'geforce 8',        // GeForce 8xxx series
-  'geforce 9',        // GeForce 9xxx series
-  'geforce 2',        // GeForce 210, etc.
-  'geforce 3',        // GeForce 310, etc.
-  'quadro fx',        // Old Quadro
-];
+/// true solo para GPUs que ANGLE no puede servir con D3D11 (DX10.1 o inferior).
+@visibleForTesting
+bool isLegacyGpuName(String adapter) {
+  final n = adapter.toLowerCase().trim();
+  if (n.isEmpty) return false;
+  // Intel "HD Graphics" sin número o 2000/2500/3000. "UHD" y la serie 5xx/6xx son modernas.
+  final intel = RegExp(r'(?<!u)hd graphics(?:\s+(\d+))?\b').firstMatch(n);
+  if (intel != null) {
+    final gen = intel.group(1);
+    if (gen == null) return true;
+    return gen.length == 4 && (int.tryParse(gen) ?? 9999) < 4000;
+  }
+  if (n.contains('gma')) return true;
+  if (RegExp(r'geforce\s+[89]\d{3}\b').hasMatch(n)) return true; // 8xxx/9xxx de 4 cifras
+  if (RegExp(r'geforce\s+[23]\d0m?\b').hasMatch(n)) return true; // 210/310/320M
+  if (RegExp(r'radeon hd [56]\d{3}\b').hasMatch(n)) return true;
+  if (n.contains('quadro fx')) return true;
+  return false;
+}
 
 /// Device performance tier used to auto-tune resource budgets at startup.
 ///
@@ -111,10 +117,54 @@ class DeviceTierDetector {
     return DeviceTier.high;
   }
 
+  static const String gpuCacheKey = 'gpu_probe_v1';
+
+  @visibleForTesting
+  static bool get reducedGpu => _reducedGpu;
+
+  @visibleForTesting
+  static set reducedGpu(bool value) => _reducedGpu = value;
+
+  @visibleForTesting
+  static void resetForTesting() {
+    _cached = null;
+    _reducedGpu = false;
+  }
+
+  @visibleForTesting
+  static Future<void> detectWindowsGpuForTesting({SharedPreferences? prefs}) =>
+      _detectWindowsGpu(prefsInstance: prefs);
+
   /// Queries Win32_VideoController via PowerShell to detect legacy GPUs.
-  /// Sets [_reducedGpu] = true when the primary GPU matches a known
-  /// legacy pattern. Timeout-guarded so it never delays startup > 3 s.
-  static Future<void> _detectWindowsGpu() async {
+  /// Sets [_reducedGpu] = true when all detected GPUs match known
+  /// legacy patterns.
+  ///
+  /// Uses SharedPreferences cache to avoid spawning PowerShell on subsequent runs.
+  /// Timeout-guarded so it never delays startup > 3 s.
+  static Future<void> _detectWindowsGpu({SharedPreferences? prefsInstance}) async {
+    SharedPreferences? prefs = prefsInstance;
+    try {
+      prefs ??= await SharedPreferences.getInstance();
+      final cached = prefs.getString(gpuCacheKey);
+      if (cached != null) {
+        final decoded = jsonDecode(cached);
+        if (decoded is Map<String, dynamic> &&
+            decoded['os'] == Platform.operatingSystemVersion &&
+            decoded['reduced'] is bool) {
+          _reducedGpu = decoded['reduced'] as bool;
+          debugPrint('[DeviceTier] Windows GPU (from cache): reducedGpu=$_reducedGpu');
+          unawaited(_probeAndCacheWindowsGpu(prefs));
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint('[DeviceTier] Windows GPU cache read error: $e');
+    }
+
+    await _probeAndCacheWindowsGpu(prefs);
+  }
+
+  static Future<void> _probeAndCacheWindowsGpu(SharedPreferences? prefs) async {
     try {
       final result = await runProcessWithTimeout(
         'powershell',
@@ -128,31 +178,28 @@ class DeviceTierDetector {
 
       if (result == null || result.exitCode != 0) return;
 
-      final gpuName = (result.stdout as String).trim().toLowerCase();
-      debugPrint('[DeviceTier] Windows GPU: $gpuName');
+      final stdoutStr = result.stdout as String;
+      final adapters = stdoutStr
+          .split(RegExp(r'\r?\n'))
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList();
 
-      if (gpuName.isEmpty) return;
+      if (adapters.isEmpty) return;
 
-      for (final pattern in _legacyGpuPatterns) {
-        if (pattern == 'hd graphics') {
-          // Match bare "HD Graphics" or "HD Graphics" followed by a number
-          // below 4000 (i.e., 2000/3000 are legacy, 4000+ are OK).
-          final regex = RegExp(r'hd graphics(?:\s+(\d+))?');
-          final match = regex.firstMatch(gpuName);
-          if (match != null) {
-            final gen = int.tryParse(match.group(1) ?? '0') ?? 0;
-            if (gen < 4000) {
-              _reducedGpu = true;
-              debugPrint('[DeviceTier] Legacy GPU detected (HD Graphics $gen)');
-              return;
-            }
-          }
-        } else if (gpuName.contains(pattern)) {
-          _reducedGpu = true;
-          debugPrint('[DeviceTier] Legacy GPU detected ($pattern)');
-          return;
-        }
-      }
+      _reducedGpu = adapters.every(isLegacyGpuName);
+      debugPrint('[DeviceTier] Windows GPU probed: $adapters (reducedGpu=$_reducedGpu)');
+
+      try {
+        final targetPrefs = prefs ?? await SharedPreferences.getInstance();
+        await targetPrefs.setString(
+          gpuCacheKey,
+          jsonEncode(<String, dynamic>{
+            'os': Platform.operatingSystemVersion,
+            'reduced': _reducedGpu,
+          }),
+        );
+      } catch (_) {}
     } catch (e) {
       debugPrint('[DeviceTier] Windows GPU detection failed: $e');
       // Fail open: assume GPU is fine.
