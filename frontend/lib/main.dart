@@ -16,7 +16,6 @@ import 'core/services/app_storage_service.dart';
 import 'core/platform/device_tier.dart';
 import 'core/platform/storage_permission_gate.dart';
 import 'features/audio_engine/data/soloud_audio_engine.dart';
-import 'core/audio/audio_initialization_result.dart';
 import 'core/theme/app_theme.dart';
 import 'features/pad_system/presentation/pages/main_pad_page.dart';
 import 'features/licensing/presentation/screens/activation_screen.dart';
@@ -34,6 +33,7 @@ import 'core/licensing/license_manager.dart';
 import 'core/security/device_fingerprint.dart';
 import 'core/services/crash_log_service.dart';
 import 'core/security/keychain_ci_smoke.dart';
+import 'core/audio/audio_bootstrapper.dart';
 import 'core/diagnostics/startup_timeline.dart';
 
 void main() {
@@ -58,7 +58,6 @@ class _AppServices {
   final SettingsService settings;
   final SoLoudAudioEngine audio;
   final KeyBindingService keyBindings;
-  final AudioInitializationResult audioInitResult;
   final SecureStorageImpl secureStorage;
   final LicenseManager licenseManager;
   final Future<Result<LicenseInfo>> licenseCheck;
@@ -67,7 +66,6 @@ class _AppServices {
     required this.settings,
     required this.audio,
     required this.keyBindings,
-    required this.audioInitResult,
     required this.secureStorage,
     required this.licenseManager,
     required this.licenseCheck,
@@ -137,39 +135,6 @@ class _BootstrapAppState extends State<_BootstrapApp> {
       await prefs.setBool(_installationMarker, true);
     } catch (e) {
       debugPrint('Error en Secure Storage inicial: $e');
-    }
-  }
-
-  /// Inicializa el motor de audio con timeout de protección.
-  ///
-  /// El presupuesto externo (30 s) cubre el peor caso de las estrategias
-  /// progresivas internas del motor (3 intentos × watchdog nativo de 5 s +
-  /// limpiezas), de modo que el motor siempre alcanza un estado terminal
-  /// (`noDevice`/`error`) y la UI muestra su overlay con botón de reintento en
-  /// vez de quedarse en "Inicializando..." sin salida.
-  Future<AudioInitializationResult> _initAudioSafe(
-    SoLoudAudioEngine audioEngine,
-    int? savedDeviceId,
-  ) async {
-    try {
-      return await audioEngine
-          .initializeAndRestoreDevice(savedDeviceId)
-          .timeout(
-        const Duration(seconds: 30),
-        onTimeout: () {
-          debugPrint('[Bootstrap] Audio init timeout after 30 s');
-          return const AudioInitializationResult.noDevice(
-            userMessage:
-                'El motor de audio tardó demasiado en responder. '
-                'Los pads funcionarán cuando el audio esté disponible.',
-          );
-        },
-      );
-    } catch (e, st) {
-      debugPrint('Error inicializando motor de audio: $e\n$st');
-      return const AudioInitializationResult.error(
-        userMessage: 'Error al inicializar el motor de audio',
-      );
     }
   }
 
@@ -257,15 +222,9 @@ class _BootstrapAppState extends State<_BootstrapApp> {
     }
 
     // ── Fase 3: Motor de audio ───────────────────────────────────────────
-    _updateStatus('Iniciando motor de audio...');
     final audioEngine = SoLoudAudioEngine();
     final settingsService = SettingsService.withPrefs(prefs);
     audioEngine.setSoundCacheCapacity(settingsService.soundCacheCapacity);
-
-    final savedDeviceId = settingsService.audioOutputDeviceId;
-    StartupTimeline.mark('audio_start');
-    final audioInitResult = await _initAudioSafe(audioEngine, savedDeviceId);
-    StartupTimeline.mark('audio');
 
     // ── Fase 4: Configuración de plataforma ──────────────────────────────
     // Rotación libre + barra de estado transparente en móvil.
@@ -293,7 +252,6 @@ class _BootstrapAppState extends State<_BootstrapApp> {
       settings: settingsService,
       audio: audioEngine,
       keyBindings: KeyBindingService(prefs),
-      audioInitResult: audioInitResult,
       secureStorage: secureStorage,
       licenseManager: licenseManager,
       licenseCheck: licenseCheck,
@@ -345,9 +303,6 @@ class _BootstrapAppState extends State<_BootstrapApp> {
               (ref) => SettingsNotifier(services.settings),
             ),
             keyBindingServiceProvider.overrideWithValue(services.keyBindings),
-            audioInitializationCacheProvider.overrideWith(
-              (ref) => services.audioInitResult,
-            ),
             secureStorageProvider.overrideWithValue(services.secureStorage),
             licenseManagerProvider.overrideWithValue(services.licenseManager),
             licenseProvider.overrideWith(
@@ -532,6 +487,13 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       StartupTimeline.mark('firstAppFrame');
+      final engine = ref.read(audioEngineProvider);
+      final saved = ref.read(settingsServiceProvider).audioOutputDeviceId;
+      AudioBootstrapper.start(engine, saved).then((result) {
+        if (mounted) {
+          ref.read(audioInitializationCacheProvider.notifier).state = result;
+        }
+      });
       ref.read(librarySyncProvider.future).then((changed) {
         if (changed > 0 && mounted) {
           refreshLibraryViewsWidget(ref);

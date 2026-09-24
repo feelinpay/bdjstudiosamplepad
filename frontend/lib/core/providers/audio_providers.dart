@@ -5,10 +5,11 @@ import '../audio/audio_engine_state.dart';
 
 /// Cache observable del resultado de inicialización del motor de audio.
 ///
-/// El bootstrap (`_BootstrapApp._initialize`) lo inyecta EXACTAMENTE una vez, tras
-/// `await` de `SoLoudAudioEngine.initializeAndRestoreDevice`, de modo que el motor
-/// nativo nunca se inicializa dos veces por arranque. El overlay de audio refresca
-/// esta cache tras un `retryAudioInitialization` para que la UI vuelva a reconstruirse.
+/// La UI arranca con null (estado `initializing` expuesto por
+/// [audioInitializationProvider]). Tras el primer frame, [AudioBootstrapper]
+/// ejecuta la inicialización en segundo plano y escribe aquí el resultado.
+/// El overlay de audio refresca esta cache tras un `retryAudioInitialization`
+/// para que la UI vuelva a reconstruirse.
 final audioInitializationCacheProvider =
     StateProvider<AudioInitializationResult?>((ref) => null);
 
