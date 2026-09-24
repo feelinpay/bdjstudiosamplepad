@@ -25,6 +25,7 @@ import '../../../workspace/data/models/workspace_model.dart';
 import '../../../../core/providers/core_providers.dart';
 import '../../../../core/providers/audio_providers.dart';
 import '../../../../core/providers/database_provider.dart';
+import '../../../../core/providers/library_sync_provider.dart';
 import '../../../../core/services/saf_folder_import_service.dart';
 import '../../../../core/audio/audio_initialization_result.dart';
 import '../../../../core/audio/audio_engine_state.dart';
@@ -223,6 +224,7 @@ class _ExplorerBody extends ConsumerWidget {
     final isFolder = currentPageIndex >= 1000;
     final accentColor = highContrast ? Colors.yellowAccent : Colors.cyanAccent;
     const appBarBg = Color(0xFF0E121B);
+    final isSyncing = ref.watch(librarySyncInProgressProvider);
     // En pantallas angostas el modo edicion desborda el AppBar (Crear +
     // Eliminar con texto + MIDI + metronomo + editar ≈ 382px en 360dp).
     // Compactamos a iconos y ocultamos indicadores secundarios.
@@ -402,19 +404,41 @@ class _ExplorerBody extends ConsumerWidget {
           if (!ultraNarrowBar) const MidiStatusIcon(),
           if (!ultraNarrowBar) const MetronomeButton(),
         ],
+        if (isSyncing)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 6.0),
+            child: Tooltip(
+              message: 'Sincronizando biblioteca…',
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.cyanAccent,
+                ),
+              ),
+            ),
+          ),
         IconButton(
           icon: Icon(
             isEditMode ? Icons.close_rounded : Icons.edit_rounded,
-            color: isEditMode ? Colors.cyanAccent : Colors.white70,
+            color: isEditMode
+                ? Colors.cyanAccent
+                : (isSyncing ? Colors.white24 : Colors.white70),
           ),
-          tooltip: isEditMode ? 'Salir de Modo Edición' : 'Modo Edición',
-          onPressed: () {
-            final nextEditMode = !isEditMode;
-            ref.read(isEditModeProvider.notifier).state = nextEditMode;
-            ref.read(padMoveSourceProvider.notifier).state = null;
-            if (!nextEditMode)
-              ref.read(selectedPadsProvider.notifier).state = {};
-          },
+          tooltip: isSyncing && !isEditMode
+              ? 'Sincronizando biblioteca…'
+              : (isEditMode ? 'Salir de Modo Edición' : 'Modo Edición'),
+          onPressed: isSyncing && !isEditMode
+              ? null
+              : () {
+                  final nextEditMode = !isEditMode;
+                  ref.read(isEditModeProvider.notifier).state = nextEditMode;
+                  ref.read(padMoveSourceProvider.notifier).state = null;
+                  if (!nextEditMode) {
+                    ref.read(selectedPadsProvider.notifier).state = {};
+                  }
+                },
         ),
         if (!isEditMode)
           PopupMenuButton<String>(

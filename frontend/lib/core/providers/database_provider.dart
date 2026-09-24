@@ -13,9 +13,7 @@ import '../../features/workspace/data/models/page_model.dart';
 import '../../features/midi/data/models/midi_mapping_model.dart';
 import '../../features/macros/data/models/macro_model.dart';
 import '../../features/settings/data/services/config_backup_service.dart';
-import '../services/filesystem_sync_service.dart';
 import '../services/local_audio_storage_service.dart';
-import '../../features/workspace/data/repositories/isar_workspace_repository.dart';
 
 /// Error de arranque de la base de datos con causa legible.
 ///
@@ -58,7 +56,11 @@ String _describeOpenFailure(Object error) {
   return 'No se pudo abrir la base de datos local.';
 }
 
-/// Abre la base de datos y deja la biblioteca lista para usarse.
+/// Abre la base de datos y deja el esquema listo para usarse.
+///
+/// La sincronización externa de archivos (disco <-> BD) ya no bloquea esta
+/// función; se ejecuta de forma diferida en segundo plano mediante
+/// [librarySyncProvider] tras pintar la UI.
 ///
 /// Es idempotente: si la instancia ya existe la devuelve tal cual, de modo que
 /// da igual quien llegue primero, el arranque de `main.dart` o el provider.
@@ -101,12 +103,6 @@ Future<Isar> openAppDatabase() async {
 
   // Unifica el separador de `samplePath` antes de que nadie compare rutas.
   await LocalAudioStorageService.normalizeLegacySamplePaths(isar);
-
-  // Reconciliar en tiempo real cualquier cambio hecho externamente (explorador de Windows/macOS)
-  await FilesystemSyncService.reconcileOnStartup(isar);
-  await IsarWorkspaceRepository(Future.value(isar))
-      .reconcileAllPageIndexIntegrity();
-  FilesystemSyncService.startLiveWatcher(isar);
 
   return isar;
 }

@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'core/providers/core_providers.dart';
 import 'core/providers/database_provider.dart';
 import 'core/providers/audio_providers.dart';
+import 'core/providers/library_sync_provider.dart';
 import 'core/services/filesystem_sync_service.dart';
 import 'core/services/app_storage_service.dart';
 import 'core/platform/device_tier.dart';
@@ -494,6 +495,11 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       StartupTimeline.mark('firstAppFrame');
+      ref.read(librarySyncProvider.future).then((changed) {
+        if (changed > 0 && mounted) {
+          refreshLibraryViewsWidget(ref);
+        }
+      });
       if (ConfigBackupService.lastRestoreRolledBack) {
         ConfigBackupService.lastRestoreRolledBack = false;
         rootScaffoldMessengerKey.currentState?.showSnackBar(

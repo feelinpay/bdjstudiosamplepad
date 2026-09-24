@@ -12,6 +12,7 @@ import 'pad_button.dart';
 import 'pad_add_actions.dart';
 import 'pad_settings_dialog.dart';
 import '../../../../core/diagnostics/startup_timeline.dart';
+import '../../../../core/providers/library_sync_provider.dart';
 
 /// Grid ESTATICO tipo "cajon de apps" (rediseño Stream Deck):
 /// - El dispositivo fija el maximo de columnas automaticamente.
@@ -604,6 +605,17 @@ class _PadCell extends ConsumerWidget {
                 ),
                 onTap: () {
                   ConcurrencyShield.safePop(ctx);
+                  if (container.read(librarySyncInProgressProvider)) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        duration: Duration(seconds: 2),
+                        content: Text(
+                          'Sincronizando biblioteca, espera un momento...',
+                        ),
+                      ),
+                    );
+                    return;
+                  }
                   container.read(padMoveSourceProvider.notifier).state = pad.id;
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
