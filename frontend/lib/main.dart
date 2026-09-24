@@ -28,17 +28,21 @@ import 'features/desktop/presentation/providers/desktop_providers.dart';
 import 'l10n/app_localizations.dart';
 import 'core/services/crash_log_service.dart';
 import 'core/security/keychain_ci_smoke.dart';
+import 'core/diagnostics/startup_timeline.dart';
 
 void main() {
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
+    StartupTimeline.watchSlowFrames();
     if (const bool.fromEnvironment('BDJ_KEYCHAIN_CI_SMOKE', defaultValue: false)) {
       runKeychainCiSmokeTest();
       return;
     }
     await CrashLogService.initialize();
+    StartupTimeline.mark('runApp');
     runApp(const _BootstrapApp());
   }, (error, stack) {
+
     CrashLogService.recordPlatformError(error, stack);
   });
 }
@@ -173,6 +177,7 @@ class _BootstrapAppState extends State<_BootstrapApp> {
     final prefs = phase1[1] as SharedPreferences;
     final tier = phase1[2] as DeviceTier;
     debugPrint('[Bootstrap] Phase 1 done — tier=$tier');
+    StartupTimeline.mark('phase1');
 
     // ── Fase 2: Restauración pendiente + Keychain cleanup ────────────────
     // Ambas son operaciones de I/O independientes con timeout de protección.
@@ -186,6 +191,7 @@ class _BootstrapAppState extends State<_BootstrapApp> {
       }),
       _cleanKeychainIfNeeded(prefs),
     ]);
+    StartupTimeline.mark('phase2');
 
     try {
       GestureBinding.instance.resamplingEnabled = false;
@@ -208,6 +214,7 @@ class _BootstrapAppState extends State<_BootstrapApp> {
       );
       await ConfigBackupService.cleanupBeforeRestoreBackup();
       debugPrint('[Bootstrap] Base de datos lista');
+      StartupTimeline.mark('database');
     } catch (e) {
       debugPrint('[Bootstrap] Error al abrir biblioteca: $e');
       final rolledBack = await ConfigBackupService.rollbackFailedRestore();
@@ -222,6 +229,7 @@ class _BootstrapAppState extends State<_BootstrapApp> {
         );
         await ConfigBackupService.cleanupBeforeRestoreBackup();
         debugPrint('[Bootstrap] Base de datos original reabierta con éxito');
+        StartupTimeline.mark('database');
       } else {
         rethrow;
       }
@@ -234,7 +242,9 @@ class _BootstrapAppState extends State<_BootstrapApp> {
     audioEngine.setSoundCacheCapacity(settingsService.soundCacheCapacity);
 
     final savedDeviceId = settingsService.audioOutputDeviceId;
+    StartupTimeline.mark('audio_start');
     final audioInitResult = await _initAudioSafe(audioEngine, savedDeviceId);
+    StartupTimeline.mark('audio');
 
     // ── Fase 4: Configuración de plataforma ──────────────────────────────
     // Rotación libre + barra de estado transparente en móvil.
@@ -483,6 +493,7 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
     WidgetsBinding.instance.addObserver(this);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      StartupTimeline.mark('firstAppFrame');
       if (ConfigBackupService.lastRestoreRolledBack) {
         ConfigBackupService.lastRestoreRolledBack = false;
         rootScaffoldMessengerKey.currentState?.showSnackBar(

@@ -11,6 +11,7 @@ import '../../domain/pad_grid_layout.dart';
 import 'pad_button.dart';
 import 'pad_add_actions.dart';
 import 'pad_settings_dialog.dart';
+import '../../../../core/diagnostics/startup_timeline.dart';
 
 /// Grid ESTATICO tipo "cajon de apps" (rediseño Stream Deck):
 /// - El dispositivo fija el maximo de columnas automaticamente.
@@ -76,6 +77,8 @@ class PadGridView extends ConsumerWidget {
     );
   }
 
+  static bool _interactiveMarked = false;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     var padsAsync = ref.watch(padPageProvider(pageIndex));
@@ -98,15 +101,23 @@ class PadGridView extends ConsumerWidget {
             )
           : const Center(child: CircularProgressIndicator()),
       error: (err, st) => Center(child: Text('Error: $err')),
-      data: (pads) => _buildGrid(
-        context,
-        ref,
-        pads,
-        isEditMode: isEditMode,
-        padSize: padSize,
-        searchQuery: searchQuery,
-        pageIndex: pageIndex,
-      ),
+      data: (pads) {
+        if (!_interactiveMarked) {
+          _interactiveMarked = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            StartupTimeline.mark('interactive');
+          });
+        }
+        return _buildGrid(
+          context,
+          ref,
+          pads,
+          isEditMode: isEditMode,
+          padSize: padSize,
+          searchQuery: searchQuery,
+          pageIndex: pageIndex,
+        );
+      },
     );
   }
 }
