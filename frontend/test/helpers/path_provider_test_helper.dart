@@ -32,6 +32,10 @@ void mockPathProviderForAllPlatforms(Directory tempRoot) {
     const MethodChannel('plugins.flutter.io/path_provider_macos'),
     handler,
   );
+
+  AppStorageService.setMediaPathForTesting(
+    p.join(tempRoot.path, 'support', 'Assets', 'Audio'),
+  );
 }
 
 /// Limpia todos los mocks de path_provider y resetea la caché estática de

@@ -633,7 +633,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
       AudioLog.log('[SoLoud] loadAudio: SKIPPED id=$id (disabled or null)');
       return;
     }
-    var resolvedPath = await LocalAudioStorageService.resolvePath(assetPath);
+    var resolvedPath = LocalAudioStorageService.resolvePathSync(assetPath);
     AudioLog.log('[SoLoud] loadAudio: resolvedPath=$resolvedPath');
 
     if (_loadedSounds.containsKey(id) && _loadedPaths[id] == resolvedPath) {

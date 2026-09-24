@@ -193,7 +193,7 @@ class FilesystemSyncService {
       for (final pad in page.pads.toList()) {
         if (pad.padTypeIndex == 0 && pad.samplePath != null) {
           try {
-            final resolved = await LocalAudioStorageService.resolvePath(
+            final resolved = LocalAudioStorageService.resolvePathSync(
               pad.samplePath!,
             );
             if (await File(resolved).exists()) return true;
@@ -250,7 +250,7 @@ class FilesystemSyncService {
       } else if (pad.padTypeIndex == 0) {
         audioPadsByName[pad.label.trim().toLowerCase()] = pad;
         if (pad.samplePath != null) {
-          final resolved = await LocalAudioStorageService.resolvePath(
+          final resolved = LocalAudioStorageService.resolvePathSync(
             pad.samplePath!,
           );
           final base = p
@@ -423,7 +423,7 @@ class FilesystemSyncService {
       } else if (pad.padTypeIndex == 0 && pad.samplePath != null) {
         // Pad de audio: verificar si el archivo aún existe en disco
         try {
-          final resolved = await LocalAudioStorageService.resolvePath(
+          final resolved = LocalAudioStorageService.resolvePathSync(
             pad.samplePath!,
           );
           final file = File(resolved);

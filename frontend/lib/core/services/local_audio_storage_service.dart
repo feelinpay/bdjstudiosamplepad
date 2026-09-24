@@ -227,12 +227,21 @@ class LocalAudioStorageService {
 
   /// Resuelve la ruta para reproducirla en SoLoud.
   /// Si empieza con `app_local://`, retorna la ruta absoluta en la PC actual.
+  /// Resuelve la ruta para reproducirla en SoLoud sin E/S.
+  /// Lanza StateError si se usa antes de que AppStorageService.initialize() haya terminado.
+  static String resolvePathSync(String pathOrUri) => pathOrUri.startsWith(prefix)
+      ? p.join(AppStorageService.mediaPathSync, pathOrUri.substring(prefix.length))
+      : pathOrUri;
+
+  /// Resuelve la ruta para reproducirla en SoLoud.
+  /// Si empieza con `app_local://`, retorna la ruta absoluta en la PC actual.
   /// De lo contrario, asume que es una ruta antigua absoluta y la devuelve tal cual.
   static Future<String> resolvePath(String pathOrUri) async {
     if (pathOrUri.startsWith(prefix)) {
       final relativePath = pathOrUri.substring(prefix.length);
-      final audiosDir = await _getAudiosDir();
-      return p.join(audiosDir.path, relativePath);
+      final base = AppStorageService.mediaPathOrNull ??
+          (await AppStorageService.mediaDirectory()).path;
+      return p.join(base, relativePath);
     }
     return pathOrUri;
   }

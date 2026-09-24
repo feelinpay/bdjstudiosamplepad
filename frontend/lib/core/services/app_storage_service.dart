@@ -36,6 +36,9 @@ class AppStorageService {
   static Future<Directory> tempDirectory() => _directory('Temp');
   static Future<Directory> thumbnailsDirectory() => _directory('Thumbnails');
 
+  static final Map<String, Future<Directory>> _dirCache = {};
+  static String? _mediaPath; // disponible tras initialize()
+
   static Future<void> initialize() async {
     final support = await _supportDirectory();
     // Primero el almacén de plugins: sus archivos dejan el support no vacío y
@@ -48,9 +51,19 @@ class AppStorageService {
       licensesDirectory(), logsDirectory(), recoveryDirectory(), settingsDirectory(),
       tempDirectory(), thumbnailsDirectory(), mediaDirectory(), backupDirectory(),
     ]);
+    _mediaPath = (await mediaDirectory()).path;
   }
 
+  /// Ruta de la carpeta de audio sin E/S, o null si aún no se ha inicializado.
+  static String? get mediaPathOrNull => _mediaPath;
+
+  /// Ruta de la carpeta de audio sin E/S. Lanza StateError si se usa antes de initialize().
+  static String get mediaPathSync => _mediaPath ??
+      (throw StateError('AppStorageService.initialize() no se ha ejecutado'));
+
   static Future<void> clearPersistentData() async {
+    _dirCache.clear();
+    _mediaPath = null;
     final directory = await root();
     if (await directory.exists()) await directory.delete(recursive: true);
   }
@@ -60,6 +73,7 @@ class AppStorageService {
     return _directory(
       'Temp',
       '${safeOperation}_${DateTime.now().microsecondsSinceEpoch}',
+      false,
     );
   }
 
@@ -70,7 +84,16 @@ class AppStorageService {
   /// En macOS la eliminación del directorio es inmediata (sin file locks),
   /// así que la caché apunta a un directorio inexistente si no se limpia.
   @visibleForTesting
-  static void resetCacheForTesting() => _cachedSupportDirectory = null;
+  static void resetCacheForTesting() {
+    _cachedSupportDirectory = null;
+    _dirCache.clear();
+    _mediaPath = null;
+  }
+
+  @visibleForTesting
+  static void setMediaPathForTesting(String? path) {
+    _mediaPath = path;
+  }
 
   /// Cachea el directorio de soporte para evitar llamadas repetidas al canal
   /// de plataforma en cada resolución de ruta (crítico para precargas rápidas).
@@ -78,12 +101,11 @@ class AppStorageService {
     return _cachedSupportDirectory ??= getApplicationSupportDirectory();
   }
 
-  static Future<Directory> _directory([String? first, String? second]) async {
+  static Future<Directory> _directory([String? first, String? second, bool cache = true]) async {
     final support = await _supportDirectory();
-    final segments = <String>[support.path];
-    if (first != null) segments.add(first);
-    if (second != null) segments.add(second);
-    return Directory(p.joinAll(segments)).create(recursive: true);
+    final path = p.joinAll([support.path, if (first != null) first, if (second != null) second]);
+    if (!cache) return Directory(path).create(recursive: true);
+    return _dirCache[path] ??= Directory(path).create(recursive: true);
   }
 
   /// Nombre de carpeta que usaban las versiones antiguas como support dir de los
