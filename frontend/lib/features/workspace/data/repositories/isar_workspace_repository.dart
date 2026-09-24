@@ -423,6 +423,7 @@ class IsarWorkspaceRepository implements WorkspaceRepository {
     // Mapeo pageIndex viejo -> nuevo: se usa para remapear targetPageIndex de
     // los pads-carpeta cuando una pagina es renumerada por la reconciliacion.
     final pageIndexMap = <int, int>{};
+    final changedPages = <PageModel>[];
     final used = <int>{};
     int cursorRoot = 0;
     for (final p in roots) {
@@ -434,8 +435,11 @@ class IsarWorkspaceRepository implements WorkspaceRepository {
       }
       used.add(idx);
       cursorRoot = idx + 1;
-      if (oldIdx != idx) pageIndexMap[oldIdx] = idx;
-      p.pageIndex = idx;
+      if (oldIdx != idx) {
+        pageIndexMap[oldIdx] = idx;
+        p.pageIndex = idx;
+        changedPages.add(p);
+      }
     }
 
     int cursorFolder = 1000;
@@ -448,14 +452,17 @@ class IsarWorkspaceRepository implements WorkspaceRepository {
       }
       used.add(idx);
       cursorFolder = idx + 1;
-      if (oldIdx != idx) pageIndexMap[oldIdx] = idx;
-      p.pageIndex = idx;
+      if (oldIdx != idx) {
+        pageIndexMap[oldIdx] = idx;
+        p.pageIndex = idx;
+        changedPages.add(p);
+      }
     }
 
+    if (changedPages.isEmpty) return;
+
     await isar.writeTxn(() async {
-      for (final p in pages) {
-        await isar.pageModels.put(p);
-      }
+      await isar.pageModels.putAll(changedPages);
       // Remapear los pads-carpeta cuyo targetPageIndex apuntaba a una pagina
       // que fue renumerada; de lo contrario los links de carpetas quedan rotos.
       if (pageIndexMap.isNotEmpty) {

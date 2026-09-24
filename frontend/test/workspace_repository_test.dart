@@ -445,4 +445,48 @@ void main() {
     expect(targetOf(2), 3,
         reason: 'macro con workspaceId de otro workspace no debe tocarse');
   });
+
+  test(
+      'reconcilePageIndexIntegrity no produce escrituras en un workspace íntegro',
+      () async {
+    final isar = await _openIsar(tempRoot);
+    addTearDown(() => isar.close());
+    final repo = IsarWorkspaceRepository(Future.value(isar));
+
+    final ws = WorkspaceModel()
+      ..name = 'Clean Workspace'
+      ..createdAt = DateTime.now();
+    final root0 = PageModel()
+      ..pageIndex = 0
+      ..workspace.value = ws;
+    final root1 = PageModel()
+      ..pageIndex = 1
+      ..workspace.value = ws;
+    final folder1000 = PageModel()
+      ..pageIndex = 1000
+      ..workspace.value = ws;
+
+    await isar.writeTxn(() async {
+      await isar.workspaceModels.put(ws);
+      await isar.pageModels.putAll([root0, root1, folder1000]);
+      folder1000.parentPageId = root0.id;
+      await isar.pageModels.put(folder1000);
+      await root0.workspace.save();
+      await root1.workspace.save();
+      await folder1000.workspace.save();
+      ws.pages.addAll([root0, root1, folder1000]);
+      await ws.pages.save();
+    });
+
+    var pageWrites = 0;
+    final sub = isar.pageModels.watchLazy().listen((_) => pageWrites++);
+    addTearDown(() => sub.cancel());
+
+    await repo.reconcilePageIndexIntegrity(ws.id);
+
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(pageWrites, 0,
+        reason:
+            'Un workspace con índices correctos no debe escribir en la base de datos');
+  });
 }
