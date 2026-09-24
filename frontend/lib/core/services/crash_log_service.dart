@@ -17,33 +17,14 @@ class CrashLogService {
 
   static const int _maxInMemoryLogs = 100;
   static final Queue<String> _inMemoryLogs = Queue<String>();
-  static File? _logFile;
-  static bool _initialized = false;
+  static IOSink? _sink;
+  static bool _handlersInstalled = false;
+  static bool _attachingLogFile = false;
 
-  /// Inicializa el servicio de logging y los interceptores globales de error.
-  static Future<void> initialize() async {
-    if (_initialized) return;
-    _initialized = true;
-
-    try {
-      final logsDir = await AppStorageService.logsDirectory();
-      _logFile = File('${logsDir.path}/app_runtime.log');
-      
-      // Rotar log si supera 2 MB
-      if (await _logFile!.exists()) {
-        final length = await _logFile!.length();
-        if (length > 2 * 1024 * 1024) {
-          final oldLog = File('${logsDir.path}/app_runtime.old.log');
-          if (await oldLog.exists()) await oldLog.delete();
-          await _logFile!.rename(oldLog.path);
-          _logFile = File('${logsDir.path}/app_runtime.log');
-        }
-      }
-    } catch (e) {
-      debugPrint('[CrashLog] Error inicializando archivo de logs: $e');
-    }
-
-    log('=== BDJ Studio App Inició ===');
+  /// Registra los interceptores globales de error de manera síncrona.
+  static void installHandlers() {
+    if (_handlersInstalled) return;
+    _handlersInstalled = true;
 
     // 1. Interceptor de errores del framework Flutter
     FlutterError.onError = (FlutterErrorDetails details) {
@@ -104,6 +85,47 @@ class CrashLogService {
         ),
       );
     };
+
+    log('=== BDJ Studio App Inició ===');
+  }
+
+  /// Conecta el archivo de log en disco de forma asíncrona y vuelca el buffer en memoria.
+  static Future<void> attachLogFile() async {
+    if (_sink != null || _attachingLogFile) return;
+    _attachingLogFile = true;
+    try {
+      final logsDir = await AppStorageService.logsDirectory();
+      var logFile = File('${logsDir.path}/app_runtime.log');
+
+      // Rotar log si supera 2 MB
+      if (await logFile.exists()) {
+        final length = await logFile.length();
+        if (length > 2 * 1024 * 1024) {
+          final oldLog = File('${logsDir.path}/app_runtime.old.log');
+          if (await oldLog.exists()) await oldLog.delete();
+          await logFile.rename(oldLog.path);
+          logFile = File('${logsDir.path}/app_runtime.log');
+        }
+      }
+
+      final sink = logFile.openWrite(mode: FileMode.append);
+      _sink = sink;
+
+      // Volcar líneas previas acumuladas en memoria en orden
+      for (final line in _inMemoryLogs) {
+        sink.writeln(line);
+      }
+    } catch (e) {
+      debugPrint('[CrashLog] Error inicializando archivo de logs: $e');
+    } finally {
+      _attachingLogFile = false;
+    }
+  }
+
+  /// Inicializa tanto interceptores como archivo de logs (compatibilidad).
+  static Future<void> initialize() async {
+    installHandlers();
+    await attachLogFile();
   }
 
   /// Registra una línea informativa o de error en memoria y en disco.
@@ -116,10 +138,29 @@ class CrashLogService {
     }
     _inMemoryLogs.add(entry);
 
-    final file = _logFile;
-    if (file != null) {
-      file.writeAsString('$entry\n', mode: FileMode.append).catchError((_) => file);
+    final sink = _sink;
+    if (sink != null) {
+      sink.writeln(entry);
     }
+  }
+
+  @visibleForTesting
+  static Future<void> closeSinkForTesting() async {
+    final sink = _sink;
+    _sink = null;
+    _attachingLogFile = false;
+    if (sink != null) {
+      await sink.flush();
+      await sink.close();
+    }
+  }
+
+  @visibleForTesting
+  static void resetForTesting() {
+    _sink = null;
+    _handlersInstalled = false;
+    _attachingLogFile = false;
+    _inMemoryLogs.clear();
   }
 
   /// Registra un error de Flutter.

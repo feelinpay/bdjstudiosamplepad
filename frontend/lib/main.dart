@@ -44,9 +44,10 @@ void main() {
       runKeychainCiSmokeTest();
       return;
     }
-    await CrashLogService.initialize();
+    CrashLogService.installHandlers();
     StartupTimeline.mark('runApp');
     runApp(const _BootstrapApp());
+    unawaited(CrashLogService.attachLogFile());
   }, (error, stack) {
 
     CrashLogService.recordPlatformError(error, stack);
@@ -92,11 +93,28 @@ class _BootstrapAppState extends State<_BootstrapApp> {
 
   Future<_AppServices>? _bootstrap;
   String _statusText = 'Preparando...';
+  bool _initializing = false;
 
   @override
   void initState() {
     super.initState();
-    _bootstrap = _initialize();
+    _startBootstrap();
+  }
+
+  void _startBootstrap() {
+    if (_initializing) return;
+    _initializing = true;
+    final future = _initialize();
+    setState(() {
+      _bootstrap = future;
+    });
+    future.whenComplete(() {
+      if (mounted) {
+        setState(() => _initializing = false);
+      } else {
+        _initializing = false;
+      }
+    });
   }
 
   void _updateStatus(String text) {
@@ -193,7 +211,7 @@ class _BootstrapAppState extends State<_BootstrapApp> {
     _updateStatus('Abriendo biblioteca...');
     try {
       await openAppDatabase().timeout(
-        const Duration(seconds: 40),
+        const Duration(seconds: 20),
         onTimeout: () => throw TimeoutException(
           'La biblioteca local tardo demasiado en abrir.',
         ),
@@ -203,19 +221,23 @@ class _BootstrapAppState extends State<_BootstrapApp> {
       StartupTimeline.mark('database');
     } catch (e) {
       debugPrint('[Bootstrap] Error al abrir biblioteca: $e');
-      final rolledBack = await ConfigBackupService.rollbackFailedRestore();
-      if (rolledBack) {
-        debugPrint('[Bootstrap] Rollback ejecutado. Reintentando abrir base de datos original...');
-        _updateStatus('Restaurando proyecto anterior...');
-        await openAppDatabase().timeout(
-          const Duration(seconds: 40),
-          onTimeout: () => throw TimeoutException(
-            'La biblioteca previa tardo demasiado en abrir.',
-          ),
-        );
-        await ConfigBackupService.cleanupBeforeRestoreBackup();
-        debugPrint('[Bootstrap] Base de datos original reabierta con éxito');
-        StartupTimeline.mark('database');
+      if (e is DatabaseUnavailableException) {
+        final rolledBack = await ConfigBackupService.rollbackFailedRestore();
+        if (rolledBack) {
+          debugPrint('[Bootstrap] Rollback ejecutado. Reintentando abrir base de datos original...');
+          _updateStatus('Restaurando proyecto anterior...');
+          await openAppDatabase().timeout(
+            const Duration(seconds: 20),
+            onTimeout: () => throw TimeoutException(
+              'La biblioteca previa tardo demasiado en abrir.',
+            ),
+          );
+          await ConfigBackupService.cleanupBeforeRestoreBackup();
+          debugPrint('[Bootstrap] Base de datos original reabierta con éxito');
+          StartupTimeline.mark('database');
+        } else {
+          rethrow;
+        }
       } else {
         rethrow;
       }
@@ -278,13 +300,12 @@ class _BootstrapAppState extends State<_BootstrapApp> {
               statusText: _statusText,
               error:
                   'No se pudo iniciar la aplicación.\n\nDetalle: $detail\n\nReinicia la aplicación o presiona reintentar.',
-              onRetry: () {
-                _statusText = 'Reintentando...';
-                final future = _initialize();
-                setState(() {
-                  _bootstrap = future;
-                });
-              },
+              onRetry: _initializing
+                  ? null
+                  : () {
+                      _statusText = 'Reintentando...';
+                      _startBootstrap();
+                    },
             ),
           );
         }
