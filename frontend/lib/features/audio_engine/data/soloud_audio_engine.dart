@@ -11,6 +11,7 @@ import '../../../core/platform/device_tier.dart';
 import '../../../core/services/local_audio_storage_service.dart';
 import '../../../core/utils/lru_cache.dart';
 import '../../../core/utils/audio_log.dart';
+import '../../../core/diagnostics/startup_timeline.dart';
 
 /// Configuration for one progressive SoLoud init strategy.
 class _InitAttempt {
@@ -56,6 +57,9 @@ class SoLoudAudioEngine implements AudioEnginePort {
   AudioEngineState _engineState = AudioEngineState.uninitialized;
   bool _isChangingDevice = false;
   int _initAttempt = 0;
+  List<PlaybackDevice>? _deviceSnapshot; // enumeración del arranque actual
+  int? _preferredDeviceId;               // pedido por initializeAndRestoreDevice
+  int? _openedDeviceId;                  // con qué dispositivo se abrió realmente
 
   @override
   AudioEngineState get engineState => _engineState;
@@ -168,7 +172,9 @@ class SoLoudAudioEngine implements AudioEnginePort {
       return;
     }
 
-    final devices = _safeListDevices();
+    StartupTimeline.mark('audio_list_devices_start');
+    final devices = _deviceSnapshot = _safeListDevices();
+    StartupTimeline.mark('audio_list_devices_end');
     if (devices.isEmpty) {
       _isInitialized = true;
       _engineState = AudioEngineState.noDevice;
@@ -177,6 +183,11 @@ class SoLoudAudioEngine implements AudioEnginePort {
       );
       return;
     }
+
+    final preferred =
+        devices.where((d) => d.id == _preferredDeviceId).firstOrNull;
+    final target = preferred ??
+        devices.firstWhere((d) => d.isDefault, orElse: () => devices.first);
 
     try {
       // Progressive init strategies. The native layer bounds each device open
@@ -201,10 +212,12 @@ class SoLoudAudioEngine implements AudioEnginePort {
 
       Object? lastError;
       bool opened = false;
+      StartupTimeline.mark('audio_device_open_start');
       for (final attempt in plan) {
         try {
           await _soloud!
               .init(
+                device: (Platform.isAndroid || Platform.isIOS) ? null : target,
                 sampleRate: attempt.sampleRate,
                 bufferSize: attempt.bufferSize,
                 channels: Channels.stereo,
@@ -219,6 +232,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
                 ),
               );
           opened = true;
+          _openedDeviceId = target.id;
           break;
         } catch (e) {
           lastError = e;
@@ -231,6 +245,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
           } catch (_) {}
         }
       }
+      StartupTimeline.mark('audio_device_open_end');
       if (!opened) {
         throw (lastError is Exception)
             ? lastError
@@ -349,6 +364,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
       '[AudioEngine] initializeAndRestoreDevice: savedDeviceId=$savedDeviceId',
     );
 
+    _preferredDeviceId = savedDeviceId;
     await _ensureInitialized();
 
     if (_audioDisabled || _soloud == null) {
@@ -360,7 +376,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
       );
     }
 
-    final devices = _safeListDevices();
+    final devices = _deviceSnapshot ?? _safeListDevices();
     if (devices.isEmpty) {
       _engineState = AudioEngineState.noDevice;
       return const AudioInitializationResult.noDevice(
@@ -402,14 +418,9 @@ class SoLoudAudioEngine implements AudioEnginePort {
       );
     }
 
-    // Mobile exposes a single OS-managed output: re-opening the very same
-    // default device would stop/restart the stream for nothing (and add one
-    // more device-open that can wedge on cheap hardware).
-    final needsDeviceSwitch =
-        !(Platform.isAndroid || Platform.isIOS) ||
-        targetDeviceId != defaultDevice.id;
+    final needsDeviceSwitch = targetDeviceId != _openedDeviceId;
     if (needsDeviceSwitch) {
-      final selectResult = await _changeDevice(targetDeviceId);
+      final selectResult = await _changeDevice(targetDeviceId, devices: devices);
       if (selectResult != null) {
         _engineState = AudioEngineState.error;
         return AudioInitializationResult.error(userMessage: selectResult);
@@ -433,6 +444,8 @@ class SoLoudAudioEngine implements AudioEnginePort {
       '[AudioEngine] retryAudioInitialization: savedDeviceId=$savedDeviceId',
     );
 
+    _deviceSnapshot = null;
+    _openedDeviceId = null;
     _initCompleter = null;
     _isInitialized = false;
 
@@ -523,18 +536,19 @@ class SoLoudAudioEngine implements AudioEnginePort {
     }
   }
 
-  String? _changeDevice(int deviceId) {
+  String? _changeDevice(int deviceId, {List<PlaybackDevice>? devices}) {
     if (_audioDisabled || _soloud == null) {
       return 'No se encontró una salida de audio disponible.';
     }
     try {
-      final devices = _soloud!.listPlaybackDevices();
-      final targetDevice = devices.firstWhere(
+      final devList = devices ?? _soloud!.listPlaybackDevices();
+      final targetDevice = devList.firstWhere(
         (d) => d.id == deviceId,
         orElse: () =>
-            devices.firstWhere((d) => d.isDefault, orElse: () => devices.first),
+            devList.firstWhere((d) => d.isDefault, orElse: () => devList.first),
       );
       _soloud!.changeDevice(newDevice: targetDevice);
+      _openedDeviceId = targetDevice.id;
       _engineState = AudioEngineState.ready;
       return null;
     } catch (e, st) {
