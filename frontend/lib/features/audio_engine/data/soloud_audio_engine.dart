@@ -12,6 +12,7 @@ import '../../../core/services/local_audio_storage_service.dart';
 import '../../../core/utils/lru_cache.dart';
 import '../../../core/utils/audio_log.dart';
 import '../../../core/diagnostics/startup_timeline.dart';
+import 'audio_load_scheduler.dart';
 
 /// Configuration for one progressive SoLoud init strategy.
 class _InitAttempt {
@@ -60,6 +61,19 @@ class SoLoudAudioEngine implements AudioEnginePort {
   List<PlaybackDevice>? _deviceSnapshot; // enumeración del arranque actual
   int? _preferredDeviceId;               // pedido por initializeAndRestoreDevice
   int? _openedDeviceId;                  // con qué dispositivo se abrió realmente
+
+  late final AudioLoadScheduler _preloadScheduler = AudioLoadScheduler(
+    maxConcurrent: _calculateMaxConcurrentLoads(),
+    load: loadAudio,
+  );
+
+  static int _calculateMaxConcurrentLoads() {
+    return switch (DeviceTierDetector.current) {
+      DeviceTier.low => 1,
+      DeviceTier.mid => 2,
+      DeviceTier.high => (Platform.numberOfProcessors ~/ 2).clamp(2, 4),
+    };
+  }
 
   @override
   AudioEngineState get engineState => _engineState;
@@ -710,11 +724,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
 
   @override
   Future<void> preloadAll(Map<String, String> idToPath) async {
-    var futures = <Future<void>>[];
-    for (var entry in idToPath.entries) {
-      futures.add(loadAudio(entry.key, entry.value));
-    }
-    await Future.wait(futures);
+    _preloadScheduler.replaceQueue(idToPath);
   }
 
   @override

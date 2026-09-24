@@ -40,6 +40,9 @@ abstract class AudioEnginePort {
   void setSoundCacheCapacity(int capacity);
   bool isLoaded(String id);
   Future<void> loadAudio(String id, String assetPath);
+
+  /// Sustituye la cola de precarga con [idToPath] y no espera a que termine.
+  /// Descarta los audios pendientes de la precarga anterior.
   Future<void> preloadAll(Map<String, String> idToPath);
   void play(
     String id,

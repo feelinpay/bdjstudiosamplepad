@@ -225,15 +225,13 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       _sub?.cancel();
     });
 
-    // Cargar audios en segundo plano de forma asíncrona sin bloquear la UI.
+    // Precargar audios en segundo plano a través de la cola con concurrencia controlada.
     // Solo los que aún no están cargados: evita recargar todo en cada rebuild.
-    Future.microtask(() {
-      for (var pad in entities) {
-        if (pad.sampleId != null && !audioEngine.isLoaded(pad.id)) {
-          audioEngine.loadAudio(pad.id, pad.sampleId!);
-        }
-      }
-    });
+    final toLoad = {
+      for (final pad in entities)
+        if (pad.sampleId != null && !audioEngine.isLoaded(pad.id)) pad.id: pad.sampleId!,
+    };
+    if (toLoad.isNotEmpty) unawaited(audioEngine.preloadAll(toLoad));
 
     return entities;
   }
