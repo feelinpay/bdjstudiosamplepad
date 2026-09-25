@@ -536,4 +536,60 @@ void main() {
       expect(padIds.toSet().length, 6, reason: 'no debe haber IDs duplicados');
     },
   );
+
+  test(
+    'LibraryWriteLock permite operaciones anidadas como deleteSelectedPads o addFolderPad sin deadlock',
+    () async {
+      final isar = await _openIsar(tempRoot);
+      addTearDown(() => isar.close());
+
+      final ws = WorkspaceModel()
+        ..name = 'Reentrancy Set'
+        ..createdAt = DateTime.now();
+      await isar.writeTxn(() async {
+        await isar.workspaceModels.put(ws);
+        final page = PageModel()
+          ..pageIndex = 0
+          ..name = 'Página 1'
+          ..columns = 4
+          ..rows = 4
+          ..workspace.value = ws;
+        await isar.pageModels.put(page);
+        await page.workspace.save();
+
+        for (int i = 0; i < 5; i++) {
+          final pad = PadModel()
+            ..padId = i
+            ..label = 'Pad $i'
+            ..colorHex = 0xFFFFFFFF
+            ..page.value = page;
+          await isar.padModels.put(pad);
+          await pad.page.save();
+        }
+      });
+
+      // Simular una operación que toma el candado y dentro ejecuta sub-operaciones que también llaman a LibraryWriteLock.run
+      final result = await LibraryWriteLock.run(() async {
+        // Sub-operación 1: anidada
+        final deletedIds = await LibraryWriteLock.run(() async {
+          final pads = await isar.padModels.where().findAll();
+          final toDelete = pads.take(3).map((p) => p.id).toList();
+          await isar.writeTxn(() async {
+            await isar.padModels.deleteAll(toDelete);
+          });
+          return toDelete;
+        });
+
+        // Sub-operación 2: anidada
+        final remainingCount = await LibraryWriteLock.run(() async {
+          return await isar.padModels.count();
+        });
+
+        return {'deleted': deletedIds.length, 'remaining': remainingCount};
+      });
+
+      expect(result['deleted'], 3);
+      expect(result['remaining'], 2);
+    },
+  );
 }

@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../../core/services/app_storage_service.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/utils/library_write_lock.dart';
 import '../../../../core/utils/zip_utils.dart';
 import '../../../macros/data/models/macro_model.dart';
 import '../../../midi/data/models/midi_mapping_model.dart';
@@ -64,7 +65,8 @@ class ProjectImporter {
     String filePath, {
     BackupImportMode mode = BackupImportMode.merge,
     void Function(int current, int total)? onProgress,
-  }) async {
+  }) =>
+      LibraryWriteLock.run(() async {
     final file = File(filePath);
     if (!await file.exists()) {
       return const ProjectImportResult(
@@ -133,7 +135,7 @@ class ProjectImporter {
         } catch (_) {}
       }
     }
-  }
+  });
 
   /// Importa formato v2 moderno (JSON estructurado + carpeta media deduplicada).
   Future<ProjectImportResult> _importFormatV2({

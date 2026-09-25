@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import '../../../../core/services/app_storage_service.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/utils/library_write_lock.dart';
 import '../../../../core/utils/zip_utils.dart';
 import '../../../pad_system/data/models/pad_model.dart';
 import '../../data/models/page_model.dart';
@@ -31,7 +32,8 @@ class WorkspaceZipImporter {
   Future<WorkspaceModel?> importFromZipFile(
     String filePath, {
     void Function(int current, int total)? onProgress,
-  }) async {
+  }) =>
+      LibraryWriteLock.run(() async {
     final file = File(filePath);
     if (!await file.exists()) {
       debugPrint('[WorkspaceZipImporter] El archivo no existe: $filePath');
@@ -242,5 +244,5 @@ class WorkspaceZipImporter {
         } catch (_) {}
       }
     }
-  }
+  });
 }

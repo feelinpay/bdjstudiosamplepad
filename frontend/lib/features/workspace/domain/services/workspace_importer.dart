@@ -8,6 +8,7 @@ import '../../../pad_system/data/models/pad_model.dart';
 import '../../../../core/services/app_storage_service.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/utils/library_write_lock.dart';
 
 /// Nodo del árbol de carpetas: subcarpetas + archivos de audio.
 class _TreeNode {
@@ -38,7 +39,8 @@ class WorkspaceImporter {
   /// Copia la carpeta [sourcePath] a la biblioteca de medios como un nuevo
   /// Workspace y construye su estructura en la base de datos.
   /// Devuelve el Workspace recién importado o `null` si falla.
-  Future<WorkspaceModel?> importWorkspace(String sourcePath) async {
+  Future<WorkspaceModel?> importWorkspace(String sourcePath) =>
+      LibraryWriteLock.run(() async {
     Directory? stagingDir;
     try {
       final source = Directory(sourcePath);
@@ -103,7 +105,7 @@ class WorkspaceImporter {
       }
       return null;
     }
-  }
+  });
 
   /// Verifica que la carpeta contenga al menos un archivo de audio.
   Future<bool> _hasImportableContent(Directory source) async {

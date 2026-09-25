@@ -50,4 +50,16 @@ void main() {
     expect(await f2, 42);
     expect(order, ['error', 'success']);
   });
+
+  test('LibraryWriteLock es reentrante en llamadas anidadas (evita deadlock)', () async {
+    final result = await LibraryWriteLock.run(() async {
+      return await LibraryWriteLock.run(() async {
+        return await LibraryWriteLock.run(() async {
+          return 'nested success';
+        });
+      });
+    });
+
+    expect(result, 'nested success');
+  });
 }

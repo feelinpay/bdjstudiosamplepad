@@ -1188,7 +1188,8 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
 
   /// Importa una estructura jerárquica de carpetas y subcarpetas de audios,
   /// recreando la estructura completa como Carpetas de Pads tipo Explorador de Archivos.
-  Future<void> importAudioDirectoryTree(AudioFolderNode rootNode) async {
+  Future<void> importAudioDirectoryTree(AudioFolderNode rootNode) =>
+      LibraryWriteLock.run(() async {
     var isar = await ref.read(isarProvider.future);
     var workspace = await ref.read(currentWorkspaceProvider.future);
     if (workspace == null) return;
@@ -1222,7 +1223,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     // Localized refresh: only this page recomputes. Sub-pages refresh lazily
     // when navigated into, avoiding a full workspace + all-page reload.
     ref.invalidateSelf();
-  }
+  });
 
   Future<void> _importPreparedNodeRecursive(
     Isar isar,
