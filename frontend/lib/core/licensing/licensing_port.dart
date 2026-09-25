@@ -27,4 +27,5 @@ abstract class LicensingPort {
   Future<Result<LicenseInfo>> syncLicense();
   LicenseStatus get currentStatus;
   bool get isLicensed;
+  void clearFingerprintCache();
 }

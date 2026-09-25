@@ -10,6 +10,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'security_port.dart';
 import '../platform/process_runner.dart';
 
+class FingerprintResult {
+  final HwidResult hwid;
+  final bool isFallback;
+
+  const FingerprintResult({
+    required this.hwid,
+    this.isFallback = false,
+  });
+
+  String get visibleHwid => hwid.visibleHwid;
+  String get stabilitySignature => hwid.stabilitySignature;
+}
+
 class _PersistedFingerprint {
   final String f;
   final String s;
@@ -42,6 +55,10 @@ class DeviceFingerprint {
 
   /// Callback invocado si la revalidación en segundo plano detecta un cambio de hardware.
   static VoidCallback? onFingerprintChanged;
+
+  static void clearCache() {
+    _cachedFingerprint = null;
+  }
 
   final Future<String?> Function()? _readPersisted;
   final Future<void> Function(String value)? _writePersisted;
@@ -102,6 +119,10 @@ class DeviceFingerprint {
   Future<void> _revalidateInBackground(_PersistedFingerprint persisted) async {
     try {
       final result = await generateResult();
+      // Si la huella proviene del identificador de reserva (fallback por timeout de WMI),
+      // NO se debe tocar lo guardado para no perder la licencia del usuario.
+      if (result.isFallback) return;
+
       if (result.stabilitySignature != persisted.s) {
         _cachedFingerprint = result.visibleHwid;
         final writer = _writePersisted;
@@ -135,12 +156,14 @@ class DeviceFingerprint {
     return _cachedFingerprint!;
   }
 
-  Future<String> _resolvePersisted(HwidResult result) async {
+  Future<String> _resolvePersisted(FingerprintResult result) async {
     final writer = _writePersisted;
     if (_readPersisted == null || writer == null) return result.visibleHwid;
     final persisted = await _readPersistedRecord();
-    if (persisted != null && persisted.s == result.stabilitySignature) {
-      return persisted.f;
+    if (persisted != null) {
+      if (persisted.s == result.stabilitySignature || result.isFallback) {
+        return persisted.f;
+      }
     }
 
     try {
@@ -154,10 +177,10 @@ class DeviceFingerprint {
     return result.visibleHwid;
   }
 
-  Future<HwidResult> generateResult() async {
+  Future<FingerprintResult> generateResult() async {
     if (Platform.isAndroid) {
       final android = await _deviceInfo.androidInfo;
-      return HwidEngine.canonicalize(
+      final hwid = HwidEngine.canonicalize(
         platform: 'android',
         components: {
           'id': android.id,
@@ -168,41 +191,46 @@ class DeviceFingerprint {
           'model': android.model,
         },
       );
+      return FingerprintResult(hwid: hwid, isFallback: false);
     } else if (Platform.isIOS) {
       final ios = await _deviceInfo.iosInfo;
-      return HwidEngine.canonicalize(
+      final hwid = HwidEngine.canonicalize(
         platform: 'ios',
         components: {
           'id': ios.identifierForVendor,
         },
       );
+      return FingerprintResult(hwid: hwid, isFallback: false);
     } else if (Platform.isWindows) {
       // Asíncrono (nunca runSync): WMI vía PowerShell puede tardar varios
       // segundos en PCs lentas y síncrono congelaría el isolate de UI.
       final hwIds = await _getWindowsHardwareIds();
       if (hwIds.isNotEmpty && hwIds.containsKey('smbiosUuid')) {
-        return HwidEngine.canonicalize(
+        final hwid = HwidEngine.canonicalize(
           platform: 'windows',
           components: hwIds,
         );
+        return FingerprintResult(hwid: hwid, isFallback: false);
       }
 
       // Fallback a machineGuid si WMI no está accesible
       final windows = await _deviceInfo.windowsInfo;
-      return HwidEngine.canonicalize(
+      final hwid = HwidEngine.canonicalize(
         platform: 'windows',
         components: {
           'deviceId': windows.deviceId,
         },
       );
+      return FingerprintResult(hwid: hwid, isFallback: true);
     } else if (Platform.isMacOS) {
       final macos = await _deviceInfo.macOsInfo;
-      return HwidEngine.canonicalize(
+      final hwid = HwidEngine.canonicalize(
         platform: 'macos',
         components: {
           'systemGUID': macos.systemGUID,
         },
       );
+      return FingerprintResult(hwid: hwid, isFallback: false);
     } else if (Platform.isLinux) {
       final linux = await _deviceInfo.linuxInfo;
       String? dmiUuid;
@@ -223,13 +251,14 @@ class DeviceFingerprint {
         } catch (_) {}
       }
 
-      return HwidEngine.canonicalize(
+      final hwid = HwidEngine.canonicalize(
         platform: 'linux',
         components: {
           'machineId': machineId,
           'productUuid': dmiUuid,
         },
       );
+      return FingerprintResult(hwid: hwid, isFallback: false);
     }
 
     throw const DeviceFingerprintFailure(

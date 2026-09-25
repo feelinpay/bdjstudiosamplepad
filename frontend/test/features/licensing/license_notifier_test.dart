@@ -69,4 +69,16 @@ void main() {
     expect(notifier.state.loadingState, LicenseLoadingState.timeout);
     expect(notifier.state.error, contains('tardó demasiado'));
   });
+
+  test('LicenseNotifier retry revalida tras un timeout', () async {
+    final completer = Completer<Result<LicenseInfo>>();
+    final notifier = LicenseNotifier(manager, preloaded: completer.future);
+
+    completer.completeError(TimeoutException('Timed out'));
+    await Future<void>.delayed(Duration.zero);
+    expect(notifier.state.loadingState, LicenseLoadingState.timeout);
+
+    await notifier.retry();
+    expect(notifier.state.loadingState, LicenseLoadingState.unlicensed);
+  });
 }

@@ -47,6 +47,12 @@ class LicenseManager implements LicensingPort {
   @override
   bool get isLicensed => _currentStatus == LicenseStatus.active;
 
+  @override
+  void clearFingerprintCache() {
+    _cachedFingerprint = null;
+    DeviceFingerprint.clearCache();
+  }
+
   Future<String> _getAppVersion() async {
     if (_cachedAppVersion != null) return _cachedAppVersion!;
     try {

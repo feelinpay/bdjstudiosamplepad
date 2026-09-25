@@ -12,6 +12,7 @@ void main() {
       'Intel(R) HD Graphics 3000': true,
       'Intel(R) HD Graphics 4600': false,
       'Intel(R) HD Graphics 520': false,
+      'Intel(R) HD Graphics P630': false,
       'Intel(R) UHD Graphics 620': false,
       'Intel(R) Iris(R) Xe Graphics': false,
       'NVIDIA GeForce 9400 GT': true,

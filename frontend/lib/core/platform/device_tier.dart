@@ -13,7 +13,7 @@ bool isLegacyGpuName(String adapter) {
   final n = adapter.toLowerCase().trim();
   if (n.isEmpty) return false;
   // Intel "HD Graphics" sin número o 2000/2500/3000. "UHD" y la serie 5xx/6xx son modernas.
-  final intel = RegExp(r'(?<!u)hd graphics(?:\s+(\d+))?\b').firstMatch(n);
+  final intel = RegExp(r'(?<!u)hd graphics(?:\s+[a-z]?(\d+))?\b').firstMatch(n);
   if (intel != null) {
     final gen = intel.group(1);
     if (gen == null) return true;
@@ -69,9 +69,9 @@ class DeviceTierDetector {
 
   /// Max concurrent sounds kept in the LRU cache.
   static int get soundCacheCapacity => switch (current) {
-    DeviceTier.low  => 50,
-    DeviceTier.mid  => 100,
-    DeviceTier.high => 200,
+    DeviceTier.low  => 25,
+    DeviceTier.mid  => 50,
+    DeviceTier.high => 100,
   };
 
   /// Interval at which the audio engine polls voice handles (ms).

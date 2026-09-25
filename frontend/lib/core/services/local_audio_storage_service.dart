@@ -225,9 +225,8 @@ class LocalAudioStorageService {
     return '$prefix$relativePath';
   }
 
-  /// Resuelve la ruta para reproducirla en SoLoud.
-  /// Si empieza con `app_local://`, retorna la ruta absoluta en la PC actual.
   /// Resuelve la ruta para reproducirla en SoLoud sin E/S.
+  /// Si empieza con `app_local://`, retorna la ruta absoluta en la PC actual.
   /// Lanza StateError si se usa antes de que AppStorageService.initialize() haya terminado.
   static String resolvePathSync(String pathOrUri) => pathOrUri.startsWith(prefix)
       ? p.join(AppStorageService.mediaPathSync, pathOrUri.substring(prefix.length))

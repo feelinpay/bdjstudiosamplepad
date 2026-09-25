@@ -43,14 +43,13 @@ class AudioLoadScheduler {
       _running++;
       try {
         _load(id, path).catchError((Object error, StackTrace stack) {
-          // Ignorado aquí para no romper el pump; el cargador ya registra el fallo.
+          debugPrint('[AudioLoadScheduler] Error al precargar audio ($id, $path): $error');
         }).whenComplete(() {
           _running--;
           _pump();
         });
       } catch (_) {
         _running--;
-        _pump();
       }
     }
   }

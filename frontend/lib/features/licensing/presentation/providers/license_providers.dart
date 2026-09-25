@@ -87,30 +87,7 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
     _checkLicense(preloaded: preloaded);
   }
 
-  Future<void> _checkLicense({Future<Result<LicenseInfo>>? preloaded}) async {
-    state = state.copyWith(loadingState: LicenseLoadingState.loading);
-
-    final Result<LicenseInfo> result;
-    try {
-      final future = preloaded ?? _manager.validateLicense();
-      result = await future.timeout(_checkBudget);
-    } on TimeoutException {
-      state = state.copyWith(
-        loadingState: LicenseLoadingState.timeout,
-        status: _manager.currentStatus,
-        error: 'La verificación de licencia tardó demasiado. '
-            'Revisa el dispositivo e inténtalo de nuevo.',
-      );
-      return;
-    } catch (e) {
-      state = state.copyWith(
-        loadingState: LicenseLoadingState.error,
-        status: _manager.currentStatus,
-        error: 'Error al verificar la licencia. '
-            'Revisa el dispositivo e inténtalo de nuevo.',
-      );
-      return;
-    }
+  void _applyValidationResult(Result<LicenseInfo> result) {
     result.fold(
       (failure) {
         state = state.copyWith(
@@ -133,6 +110,48 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
         );
       },
     );
+  }
+
+  Future<void> _checkLicense({Future<Result<LicenseInfo>>? preloaded}) async {
+    state = state.copyWith(loadingState: LicenseLoadingState.loading);
+
+    final future = preloaded ?? _manager.validateLicense();
+    final Result<LicenseInfo> result;
+    try {
+      result = await future.timeout(_checkBudget);
+    } on TimeoutException {
+      // Si la verificación completa tarde (ej. hardware lento o WMI),
+      // y la pantalla sigue en timeout, resolvemos automáticamente sin requerir acción manual.
+      future.then((lateResult) {
+        if (state.loadingState == LicenseLoadingState.timeout) {
+          _applyValidationResult(lateResult);
+        }
+      }).catchError((_) {});
+
+      state = state.copyWith(
+        loadingState: LicenseLoadingState.timeout,
+        status: _manager.currentStatus,
+        error: 'La verificación de licencia tardó demasiado. '
+            'Revisa el dispositivo e inténtalo de nuevo.',
+      );
+      return;
+    } catch (e) {
+      state = state.copyWith(
+        loadingState: LicenseLoadingState.error,
+        status: _manager.currentStatus,
+        error: 'Error al verificar la licencia. '
+            'Revisa el dispositivo e inténtalo de nuevo.',
+      );
+      return;
+    }
+
+    _applyValidationResult(result);
+  }
+
+  /// Reintenta la comprobación completa de la licencia limpiando cachés previas.
+  Future<void> retry() async {
+    _manager.clearFingerprintCache();
+    await _checkLicense();
   }
 
   Future<void> activate(String licenseKey) async {
@@ -187,13 +206,27 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
   }
 
   Future<void> sync() async {
-    var result = await _manager.syncLicense();
-    result.fold((failure) {}, (info) {
-      state = state.copyWith(
-        status: info.status,
-        remainingOfflineDays: info.remainingOfflineDays,
+    _manager.clearFingerprintCache();
+    try {
+      final result = await _manager.syncLicense().timeout(_checkBudget);
+      result.fold(
+        (failure) {
+          state = state.copyWith(
+            loadingState: LicenseLoadingState.unlicensed,
+            error: failure.message,
+          );
+        },
+        (info) {
+          state = state.copyWith(
+            loadingState: LicenseLoadingState.licensed,
+            status: info.status,
+            remainingOfflineDays: info.remainingOfflineDays,
+          );
+        },
       );
-    });
+    } catch (_) {
+      // Timeout o error transitorio en sincronización de fondo: no degradamos estado
+    }
   }
 
   Future<void> deactivate() async {

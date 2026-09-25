@@ -19,10 +19,30 @@ import '../../../../core/providers/library_sync_provider.dart';
 /// - El DJ puede elegir pads mas grandes (menos columnas) desde Ajustes.
 /// - Lo que no cabe en pantalla fluye a la siguiente pagina (swipe lateral).
 /// - Sin coordenadas libres, sin drag, sin resize: nunca se desacomoda.
-class PadGridView extends ConsumerWidget {
+class PadGridView extends ConsumerStatefulWidget {
   final int pageIndex;
 
   const PadGridView({super.key, required this.pageIndex});
+
+  @override
+  ConsumerState<PadGridView> createState() => _PadGridViewState();
+}
+
+class _PadGridViewState extends ConsumerState<PadGridView> {
+  late final ScrollController _scrollController;
+  static bool _interactiveMarked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   Widget _buildGrid(
     BuildContext context,
@@ -52,9 +72,11 @@ class PadGridView extends ConsumerWidget {
         );
 
         return Scrollbar(
+          controller: _scrollController,
           thumbVisibility: true,
           interactive: true,
           child: GridView.builder(
+            controller: _scrollController,
             key: PageStorageKey<int>(pageIndex),
             physics: const BouncingScrollPhysics(),
             addAutomaticKeepAlives: false,
@@ -78,11 +100,9 @@ class PadGridView extends ConsumerWidget {
     );
   }
 
-  static bool _interactiveMarked = false;
-
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    var padsAsync = ref.watch(padPageProvider(pageIndex));
+  Widget build(BuildContext context) {
+    var padsAsync = ref.watch(padPageProvider(widget.pageIndex));
     var isEditMode = ref.watch(isEditModeProvider);
     var padSize = ref.watch(settingsProvider.select((s) => s.padSize));
     var searchQuery = ref.watch(searchQueryProvider).toLowerCase();
@@ -98,7 +118,7 @@ class PadGridView extends ConsumerWidget {
               isEditMode: isEditMode,
               padSize: padSize,
               searchQuery: searchQuery,
-              pageIndex: pageIndex,
+              pageIndex: widget.pageIndex,
             )
           : const Center(child: CircularProgressIndicator()),
       error: (err, st) => Center(child: Text('Error: $err')),
@@ -116,7 +136,7 @@ class PadGridView extends ConsumerWidget {
           isEditMode: isEditMode,
           padSize: padSize,
           searchQuery: searchQuery,
-          pageIndex: pageIndex,
+          pageIndex: widget.pageIndex,
         );
       },
     );

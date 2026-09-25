@@ -109,6 +109,7 @@ class CrashLogService {
       }
 
       final sink = logFile.openWrite(mode: FileMode.append);
+      sink.done.catchError((Object error, StackTrace stack) => _sink = null);
       _sink = sink;
 
       // Volcar líneas previas acumuladas en memoria en orden
@@ -119,6 +120,16 @@ class CrashLogService {
       debugPrint('[CrashLog] Error inicializando archivo de logs: $e');
     } finally {
       _attachingLogFile = false;
+    }
+  }
+
+  /// Fuerza el volcado al disco del búfer pendiente (ej. cuando la app entra en pausa o segundo plano).
+  static Future<void> flush() async {
+    final s = _sink;
+    if (s != null) {
+      try {
+        await s.flush();
+      } catch (_) {}
     }
   }
 

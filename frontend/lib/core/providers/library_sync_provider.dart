@@ -23,13 +23,17 @@ void refreshLibraryViewsWidget(WidgetRef ref) {
 /// Devuelve cuántos elementos cambió para decidir si refrescar la vista.
 final librarySyncProvider = FutureProvider<int>((ref) async {
   final isar = await ref.read(isarProvider.future);
-  final changed = await FilesystemSyncService.reconcileOnStartup(isar);
-  await IsarWorkspaceRepository(Future.value(isar))
-      .reconcileAllPageIndexIntegrity();
-  FilesystemSyncService.startLiveWatcher(
-    isar,
-    onChangesDetected: () => refreshLibraryViews(ref),
-  );
+  int changed = 0;
+  try {
+    changed = await FilesystemSyncService.reconcileOnStartup(isar);
+    await IsarWorkspaceRepository(Future.value(isar))
+        .reconcileAllPageIndexIntegrity();
+  } finally {
+    FilesystemSyncService.startLiveWatcher(
+      isar,
+      onChangesDetected: () => refreshLibraryViews(ref),
+    );
+  }
   return changed;
 });
 

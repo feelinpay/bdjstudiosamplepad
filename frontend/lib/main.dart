@@ -553,6 +553,9 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       ref.read(licenseProvider.notifier).sync();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      unawaited(CrashLogService.flush());
     }
   }
 
@@ -654,7 +657,7 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
                   ),
                   const SizedBox(height: 24),
                   FilledButton.icon(
-                    onPressed: () => ref.read(licenseProvider.notifier).sync(),
+                    onPressed: () => ref.read(licenseProvider.notifier).retry(),
                     icon: const Icon(Icons.refresh_rounded),
                     label: const Text('Reintentar'),
                   ),
