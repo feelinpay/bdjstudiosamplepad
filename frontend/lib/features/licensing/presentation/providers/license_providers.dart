@@ -81,6 +81,7 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
   /// la app se quedaría en el spinner eterno. Con él, cae a la pantalla de
   /// activación con mensaje y el usuario puede reintentar.
   static const _checkBudget = Duration(seconds: 12);
+  int _checkGeneration = 0;
 
   LicenseNotifier(this._manager, {Future<Result<LicenseInfo>>? preloaded})
       : super(const LicenseState()) {
@@ -113,6 +114,7 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
   }
 
   Future<void> _checkLicense({Future<Result<LicenseInfo>>? preloaded}) async {
+    final generation = ++_checkGeneration;
     state = state.copyWith(loadingState: LicenseLoadingState.loading);
 
     final future = preloaded ?? _manager.validateLicense();
@@ -121,31 +123,38 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
       result = await future.timeout(_checkBudget);
     } on TimeoutException {
       // Si la verificación completa tarde (ej. hardware lento o WMI),
-      // y la pantalla sigue en timeout, resolvemos automáticamente sin requerir acción manual.
+      // y la pantalla sigue en timeout en la MISMA generación, resolvemos automáticamente.
       future.then((lateResult) {
-        if (state.loadingState == LicenseLoadingState.timeout) {
+        if (generation == _checkGeneration &&
+            state.loadingState == LicenseLoadingState.timeout) {
           _applyValidationResult(lateResult);
         }
       }).catchError((_) {});
 
-      state = state.copyWith(
-        loadingState: LicenseLoadingState.timeout,
-        status: _manager.currentStatus,
-        error: 'La verificación de licencia tardó demasiado. '
-            'Revisa el dispositivo e inténtalo de nuevo.',
-      );
+      if (generation == _checkGeneration) {
+        state = state.copyWith(
+          loadingState: LicenseLoadingState.timeout,
+          status: _manager.currentStatus,
+          error: 'La verificación de licencia tardó demasiado. '
+              'Revisa el dispositivo e inténtalo de nuevo.',
+        );
+      }
       return;
     } catch (e) {
-      state = state.copyWith(
-        loadingState: LicenseLoadingState.error,
-        status: _manager.currentStatus,
-        error: 'Error al verificar la licencia. '
-            'Revisa el dispositivo e inténtalo de nuevo.',
-      );
+      if (generation == _checkGeneration) {
+        state = state.copyWith(
+          loadingState: LicenseLoadingState.error,
+          status: _manager.currentStatus,
+          error: 'Error al verificar la licencia. '
+              'Revisa el dispositivo e inténtalo de nuevo.',
+        );
+      }
       return;
     }
 
-    _applyValidationResult(result);
+    if (generation == _checkGeneration) {
+      _applyValidationResult(result);
+    }
   }
 
   /// Reintenta la comprobación completa de la licencia limpiando cachés previas.

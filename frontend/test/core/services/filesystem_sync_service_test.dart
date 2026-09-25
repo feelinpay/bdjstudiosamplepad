@@ -11,6 +11,7 @@ import '../../helpers/path_provider_test_helper.dart';
 import 'package:bdj_studio_sample_pad/core/services/app_storage_service.dart';
 import 'package:bdj_studio_sample_pad/core/services/filesystem_sync_service.dart';
 import 'package:bdj_studio_sample_pad/core/services/local_audio_storage_service.dart';
+import 'package:bdj_studio_sample_pad/core/utils/library_write_lock.dart';
 import 'package:bdj_studio_sample_pad/features/workspace/data/models/workspace_model.dart';
 import 'package:bdj_studio_sample_pad/features/workspace/data/models/page_model.dart';
 import 'package:bdj_studio_sample_pad/features/pad_system/data/models/pad_model.dart';
@@ -430,6 +431,109 @@ void main() {
       final workspaces = await isar.workspaceModels.where().findAll();
       expect(workspaces.map((w) => w.name), contains('Good Set'));
       expect(count, greaterThan(0));
+    },
+  );
+
+  test(
+    'reconcileOnStartup con 1.000 archivos inserta en lotes, genera padIds consecutivos y segunda pasada no duplica',
+    () async {
+      final mediaDir = await _expectedMediaDir();
+      final wsDir = Directory(p.join(mediaDir.path, 'Big Set'));
+      await wsDir.create(recursive: true);
+
+      for (var i = 0; i < 1000; i++) {
+        final numStr = i.toString().padLeft(4, '0');
+        File(p.join(wsDir.path, 'audio_$numStr.wav')).writeAsBytesSync([1]);
+      }
+
+      final isar = await _openIsar(tempRoot);
+      addTearDown(() => isar.close());
+
+      final count = await FilesystemSyncService.reconcileOnStartup(isar);
+      // 1 nuevo workspace ('Big Set') + 1000 nuevos pads
+      expect(count, 1001);
+
+      final pads = await isar.padModels.where().sortByPadId().findAll();
+      expect(pads.length, 1000);
+
+      // Verificar que los padId son consecutivos
+      for (var i = 0; i < pads.length; i++) {
+        expect(pads[i].padId, i);
+      }
+
+      // Segunda pasada: no debe duplicar nada
+      final secondCount = await FilesystemSyncService.reconcileOnStartup(isar);
+      expect(secondCount, 0);
+
+      final padsAfterSecond = await isar.padModels.where().findAll();
+      expect(padsAfterSecond.length, 1000);
+    },
+  );
+
+  test(
+    'LibraryWriteLock previene colisiones entre sincronización de disco y creación de pad',
+    () async {
+      final mediaDir = await _expectedMediaDir();
+      final wsDir = Directory(p.join(mediaDir.path, 'Concurrent Set'));
+      await wsDir.create(recursive: true);
+
+      // Crear 5 archivos de audio
+      for (var i = 0; i < 5; i++) {
+        File(p.join(wsDir.path, 'sample_$i.wav')).writeAsBytesSync([1]);
+      }
+
+      final isar = await _openIsar(tempRoot);
+      addTearDown(() => isar.close());
+
+      // Lanzar simultáneamente la reconciliación y una acción de escritura de pad
+      final syncFuture = FilesystemSyncService.reconcileOnStartup(isar);
+
+      final newPadFuture = LibraryWriteLock.run(() async {
+        final ws = await isar.workspaceModels
+            .filter()
+            .nameEqualTo('Concurrent Set')
+            .findFirst();
+        if (ws != null) {
+          final page = await isar.pageModels
+              .filter()
+              .workspace((w) => w.idEqualTo(ws.id))
+              .pageIndexEqualTo(0)
+              .findFirst();
+          if (page != null) {
+            await page.pads.load();
+            final existing = await isar.padModels
+                .filter()
+                .page((q) => q.idEqualTo(page.id))
+                .findAll();
+            final nextId = existing.isEmpty
+                ? 0
+                : existing.map((p) => p.padId).reduce((a, b) => a > b ? a : b) + 1;
+            final pad = PadModel()
+              ..padId = nextId
+              ..label = 'User Created Pad'
+              ..colorHex = 0xFFFFFFFF
+              ..page.value = page;
+            await isar.writeTxn(() async {
+              await isar.padModels.put(pad);
+              await pad.page.save();
+            });
+            return nextId;
+          }
+        }
+        return -1;
+      });
+
+      await syncFuture;
+      final createdPadId = await newPadFuture;
+
+      // El pad creado tras la sincronización debe tener padId == 5 (0..4 de los 5 archivos)
+      expect(createdPadId, 5);
+
+      final allPads = await isar.padModels.where().sortByPadId().findAll();
+      expect(allPads.length, 6);
+      final padIds = allPads.map((p) => p.padId).toList();
+      expect(padIds, [0, 1, 2, 3, 4, 5]);
+      expect(padIds.toSet().length, 6, reason: 'no debe haber IDs duplicados');
     },
   );
 }

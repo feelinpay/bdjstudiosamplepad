@@ -81,4 +81,58 @@ void main() {
     await notifier.retry();
     expect(notifier.state.loadingState, LicenseLoadingState.unlicensed);
   });
+
+  test('LicenseNotifier sync con LicenseFailure pasa a unlicensed', () async {
+    final completer = Completer<Result<LicenseInfo>>();
+    final notifier = LicenseNotifier(manager, preloaded: completer.future);
+
+    final info = LicenseInfo(
+      status: LicenseStatus.active,
+      licenseKey: 'TEST-KEY',
+      deviceId: '1111-2222-3333-4444',
+      activatedAt: DateTime.now(),
+      expiresAt: DateTime.now().add(const Duration(days: 365)),
+      remainingOfflineDays: 30,
+    );
+    completer.complete(Right(info));
+    await Future<void>.delayed(Duration.zero);
+    expect(notifier.state.loadingState, LicenseLoadingState.licensed);
+
+    // Al llamar a sync() en manager con storage vacío, valida y devuelve Left(LicenseFailure)
+    await notifier.sync();
+    expect(notifier.state.loadingState, LicenseLoadingState.unlicensed);
+    expect(notifier.state.error, contains('No hay una licencia activa'));
+  });
+
+  test('LicenseNotifier generacion tardia no pisa el resultado de retry()', () async {
+    final firstCompleter = Completer<Result<LicenseInfo>>();
+    final notifier = LicenseNotifier(manager, preloaded: firstCompleter.future);
+
+    // Simular que el primer chequeo entra en timeout
+    notifier.state = notifier.state.copyWith(
+      loadingState: LicenseLoadingState.timeout,
+      error: 'Timeout',
+    );
+
+    // Usuario pulsa retry() antes de que llegue la respuesta tardía
+    final retryFuture = notifier.retry();
+    await retryFuture;
+    expect(notifier.state.loadingState, LicenseLoadingState.unlicensed);
+
+    // Ahora llega la respuesta original tardía con una licencia válida
+    final info = LicenseInfo(
+      status: LicenseStatus.active,
+      licenseKey: 'STALE-KEY',
+      deviceId: '1111-2222-3333-4444',
+      activatedAt: DateTime.now(),
+      expiresAt: DateTime.now().add(const Duration(days: 365)),
+      remainingOfflineDays: 30,
+    );
+    firstCompleter.complete(Right(info));
+    await Future<void>.delayed(Duration.zero);
+
+    // NO debe haber pisado el resultado del retry
+    expect(notifier.state.loadingState, LicenseLoadingState.unlicensed);
+    expect(notifier.state.licenseKey, isNull);
+  });
 }

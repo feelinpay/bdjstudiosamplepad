@@ -21,6 +21,7 @@ import '../../../midi/data/models/midi_mapping_model.dart';
 import '../../../macros/presentation/providers/macro_providers.dart';
 import '../../../../core/providers/database_provider.dart';
 import '../../../../core/utils/audio_log.dart';
+import '../../../../core/utils/library_write_lock.dart';
 import '../../../../core/theme/app_colors.dart';
 
 /// Nodo jerárquico para representación de carpetas y subcarpetas de audios.
@@ -270,7 +271,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     );
   }
 
-  Future<void> createNewPad() async {
+  Future<void> createNewPad() => LibraryWriteLock.run(() async {
     var isar = await ref.read(isarProvider.future);
     var workspace = await ref.read(currentWorkspaceProvider.future);
     if (workspace == null) return;
@@ -314,7 +315,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     // Localized update: append the new pad without invalidating the whole page.
     final current = state.value ?? [];
     state = AsyncData([...current, _mapToEntity(newModel)]);
-  }
+  });
 
   Future<void> assignSampleToPad(
     String padIdString,
@@ -554,7 +555,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     }
   }
 
-  Future<void> deletePad(String padIdString) async {
+  Future<void> deletePad(String padIdString) => LibraryWriteLock.run(() async {
     var padId = int.parse(padIdString);
     var isar = await ref.read(isarProvider.future);
     if (!ref.mounted) return;
@@ -600,9 +601,9 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     state = AsyncData([
       for (final e in current) if (!deletingIds.contains(e.id)) e,
     ]);
-  }
+  });
 
-  Future<void> deleteSelectedPads(Set<String> padIds) async {
+  Future<void> deleteSelectedPads(Set<String> padIds) => LibraryWriteLock.run(() async {
     var isar = await ref.read(isarProvider.future);
     if (!ref.mounted) return;
     var workspace = await ref.read(currentWorkspaceProvider.future);
@@ -659,7 +660,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     state = AsyncData([
       for (final e in current) if (!deletingIds.contains(e.id)) e,
     ]);
-  }
+  });
 
   Future<PageModel?> _pageForIndex(int index) async {
     var workspace = await ref.read(currentWorkspaceProvider.future);
@@ -735,7 +736,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
 
   /// Duplica un pad. Si es carpeta, copia TAMBIEN su contenido interno
   /// (duplicacion profunda) para poder editarla sin alterar la original.
-  Future<void> duplicatePad(PadEntity sourcePad) async {
+  Future<void> duplicatePad(PadEntity sourcePad) => LibraryWriteLock.run(() async {
     var sourceId = int.parse(sourcePad.id);
     var isar = await ref.read(isarProvider.future);
     var page = await _pageForIndex(arg);
@@ -798,7 +799,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       final current = state.value ?? [];
       state = AsyncData([...current, _mapToEntity(newModel)]);
     });
-  }
+  });
 
   /// Agrega [count] pads al final de la pagina (boton [+]). Si se pasan
   /// [samplePaths], cada pad nuevo queda con su sonido ya asignado.
@@ -806,7 +807,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     int count, {
     List<String>? samplePaths,
     List<String>? sampleNames,
-  }) async {
+  }) => LibraryWriteLock.run(() async {
     var isar = await ref.read(isarProvider.future);
     var page = await _pageForIndex(arg);
     if (page == null) return;
@@ -848,10 +849,10 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       final current = state.value ?? [];
       state = AsyncData([...current, for (final m in models) _mapToEntity(m)]);
     });
-  }
+  });
 
   /// Crea un pad-carpeta con su pagina interna oculta (indice >= 1000).
-  Future<void> addFolderPad(String name) async {
+  Future<void> addFolderPad(String name) => LibraryWriteLock.run(() async {
     var isar = await ref.read(isarProvider.future);
     var page = await _pageForIndex(arg);
     var workspace = await ref.read(currentWorkspaceProvider.future);
@@ -898,7 +899,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     // Localized update: append the new folder pad only.
     final current = state.value ?? [];
     state = AsyncData([...current, for (final m in addedModels) _mapToEntity(m)]);
-  }
+  });
 
   Future<List<String>> _getFolderPath(Isar isar, int currentIdx) async {
     final workspace = await ref.read(currentWorkspaceProvider.future);
@@ -1364,7 +1365,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
 
   /// Intercambia la POSICION de dos pads (sin arrastrar): se intercambian
   /// sus padId, por lo que en la cuadricula quedan en lugares opuestos.
-  Future<void> swapPads(String idA, String idB) async {
+  Future<void> swapPads(String idA, String idB) => LibraryWriteLock.run(() async {
     if (idA == idB) return;
     var a = int.tryParse(idA);
     var b = int.tryParse(idB);
@@ -1383,7 +1384,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
 
     // swapPads changes padId (grid order) — refresh only this page.
     ref.invalidateSelf();
-  }
+  });
 
   void _setPadState(String id, PadState newState) {
     if (!state.hasValue) return;

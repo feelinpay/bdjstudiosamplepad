@@ -7,6 +7,7 @@ import 'package:isar_community/isar.dart';
 import 'app_storage_service.dart';
 import 'local_audio_storage_service.dart';
 import '../theme/app_colors.dart';
+import '../utils/library_write_lock.dart';
 import '../../features/workspace/data/models/workspace_model.dart';
 import '../../features/workspace/data/models/page_model.dart';
 import '../../features/pad_system/data/models/pad_model.dart';
@@ -25,7 +26,10 @@ class FilesystemSyncService {
   /// en la base de datos cualquier Workspace, subcarpeta o archivo de audio que
   /// haya sido agregado de forma externa desde la computadora.
   /// Devuelve el número de nuevos elementos reconciliados.
-  static Future<int> reconcileOnStartup(Isar isar) async {
+  static Future<int> reconcileOnStartup(Isar isar) =>
+      LibraryWriteLock.run(() => _reconcileOnStartupInternal(isar));
+
+  static Future<int> _reconcileOnStartupInternal(Isar isar) async {
     if (_isSyncing) return 0;
     _isSyncing = true;
     try {
@@ -272,6 +276,7 @@ class FilesystemSyncService {
 
     final mediaDir = await AppStorageService.mediaDirectory();
     final mediaDirPath = mediaDir.path;
+    final newAudioPads = <PadModel>[];
 
     for (final child in children) {
       final name = p.basename(child.path).trim();
@@ -360,22 +365,34 @@ class FilesystemSyncService {
           relPath = child.path;
         }
 
-        await isar.writeTxn(() async {
-          final newPad = PadModel()
-            ..padId = maxPadId
-            ..label = cleanName.replaceAll('_', ' ')
-            ..colorHex = AppColors.audioPadPalette[maxPadId % AppColors.audioPadPalette.length]
-            ..padTypeIndex = 0
-            ..samplePath = relPath
-            ..triggerModeIndex = 0
-            ..page.value = page;
-          await isar.padModels.put(newPad);
-          await newPad.page.save();
-        });
+        final newPad = PadModel()
+          ..padId = maxPadId
+          ..label = cleanName.replaceAll('_', ' ')
+          ..colorHex = AppColors.audioPadPalette[maxPadId % AppColors.audioPadPalette.length]
+          ..padTypeIndex = 0
+          ..samplePath = relPath
+          ..triggerModeIndex = 0
+          ..page.value = page;
 
-        audioPadsByName[cleanName.toLowerCase()] = PadModel()
-          ..label = cleanName;
+        newAudioPads.add(newPad);
+        audioPadsByName[cleanName.toLowerCase()] = newPad;
         addedCount++;
+      }
+    }
+
+    if (newAudioPads.isNotEmpty) {
+      const batchSize = 500;
+      for (var i = 0; i < newAudioPads.length; i += batchSize) {
+        final end = (i + batchSize < newAudioPads.length)
+            ? i + batchSize
+            : newAudioPads.length;
+        final batch = newAudioPads.sublist(i, end);
+        await isar.writeTxn(() async {
+          await isar.padModels.putAll(batch);
+          for (final pad in batch) {
+            await pad.page.save();
+          }
+        });
       }
     }
 
