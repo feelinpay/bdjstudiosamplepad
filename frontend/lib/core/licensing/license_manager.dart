@@ -258,14 +258,33 @@ class LicenseManager implements LicensingPort {
     return validateLicense();
   }
 
+  @override
+  Future<DateTime?> getLastLicenseCheckUtc() async {
+    final result = await _secureStorage.readSecure(LicenseStorageKeys.lastLicenseCheckUtc);
+    final str = result.getOrElse(() => null);
+    return str != null ? DateTime.tryParse(str)?.toUtc() : null;
+  }
+
   Future<void> _saveActivationData({
     required String licenseKey,
     required String status,
     required String deviceId,
   }) async {
-    await _secureStorage.storeSecure(LicenseStorageKeys.licenseKey, licenseKey);
-    await _secureStorage.storeSecure(LicenseStorageKeys.licenseStatus, status);
-    await _secureStorage.storeSecure(LicenseStorageKeys.deviceId, deviceId);
+    final currentKey = (await _secureStorage.readSecure(LicenseStorageKeys.licenseKey)).getOrElse(() => null);
+    if (currentKey != licenseKey) {
+      await _secureStorage.storeSecure(LicenseStorageKeys.licenseKey, licenseKey);
+    }
+
+    final currentStatus = (await _secureStorage.readSecure(LicenseStorageKeys.licenseStatus)).getOrElse(() => null);
+    if (currentStatus != status) {
+      await _secureStorage.storeSecure(LicenseStorageKeys.licenseStatus, status);
+    }
+
+    final currentDeviceId = (await _secureStorage.readSecure(LicenseStorageKeys.deviceId)).getOrElse(() => null);
+    if (currentDeviceId != deviceId) {
+      await _secureStorage.storeSecure(LicenseStorageKeys.deviceId, deviceId);
+    }
+
     await _secureStorage.storeSecure(
       LicenseStorageKeys.lastSyncAt,
       DateTime.now().toIso8601String(),

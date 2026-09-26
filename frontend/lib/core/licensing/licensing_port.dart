@@ -28,4 +28,5 @@ abstract class LicensingPort {
   LicenseStatus get currentStatus;
   bool get isLicensed;
   void clearFingerprintCache();
+  Future<DateTime?> getLastLicenseCheckUtc();
 }

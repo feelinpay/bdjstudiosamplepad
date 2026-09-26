@@ -9,14 +9,26 @@ import 'package:bdj_studio_sample_pad/core/errors/failures.dart';
 import 'package:bdj_studio_sample_pad/features/licensing/presentation/providers/license_providers.dart';
 
 class _FakeSecurityPort implements SecurityPort {
+  final Map<String, String> data = {};
+
   @override
-  Future<Result<void>> storeSecure(String key, String value) async => const Right(null);
+  Future<Result<void>> storeSecure(String key, String value) async {
+    data[key] = value;
+    return const Right(null);
+  }
+
   @override
-  Future<Result<String?>> readSecure(String key) async => const Right(null);
+  Future<Result<String?>> readSecure(String key) async => Right(data[key]);
+
   @override
-  Future<Result<void>> deleteSecure(String key) async => const Right(null);
+  Future<Result<void>> deleteSecure(String key) async {
+    data.remove(key);
+    return const Right(null);
+  }
+
   @override
-  Future<Result<bool>> containsSecure(String key) async => const Right(false);
+  Future<Result<bool>> containsSecure(String key) async => Right(data.containsKey(key));
+
   @override
   Future<Result<bool>> performSelfTest() async => const Right(true);
 }
@@ -29,11 +41,13 @@ class _FakeFingerprint extends DeviceFingerprint {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  late _FakeSecurityPort fakeStorage;
   late LicenseManager manager;
 
   setUp(() {
+    fakeStorage = _FakeSecurityPort();
     manager = LicenseManager(
-      secureStorage: _FakeSecurityPort(),
+      secureStorage: fakeStorage,
       fingerprint: _FakeFingerprint(),
     );
   });
@@ -134,5 +148,82 @@ void main() {
     // NO debe haber pisado el resultado del retry
     expect(notifier.state.loadingState, LicenseLoadingState.unlicensed);
     expect(notifier.state.licenseKey, isNull);
+  });
+
+  test('LicenseNotifier sync ignora la llamada si pasaron menos de 30 minutos', () async {
+    final completer = Completer<Result<LicenseInfo>>();
+    final notifier = LicenseNotifier(manager, preloaded: completer.future);
+
+    final info = LicenseInfo(
+      status: LicenseStatus.active,
+      licenseKey: 'TEST-KEY',
+      deviceId: '1111-2222-3333-4444',
+      activatedAt: DateTime.now(),
+      expiresAt: DateTime.now().add(const Duration(days: 365)),
+      remainingOfflineDays: 30,
+    );
+    completer.complete(Right(info));
+    await Future<void>.delayed(Duration.zero);
+    expect(notifier.state.loadingState, LicenseLoadingState.licensed);
+
+    // Simulamos que la última verificación fue hace 10 minutos
+    fakeStorage.data[LicenseStorageKeys.lastLicenseCheckUtc] =
+        DateTime.now().toUtc().subtract(const Duration(minutes: 10)).toIso8601String();
+
+    // sync() no debe hacer nada: debe mantenerse en licensed aunque el storage no tenga clave activa
+    await notifier.sync();
+    expect(notifier.state.loadingState, LicenseLoadingState.licensed);
+    expect(notifier.state.licenseKey, 'TEST-KEY');
+  });
+
+  test('LicenseNotifier sync revalida si pasaron más de 30 minutos', () async {
+    final completer = Completer<Result<LicenseInfo>>();
+    final notifier = LicenseNotifier(manager, preloaded: completer.future);
+
+    final info = LicenseInfo(
+      status: LicenseStatus.active,
+      licenseKey: 'TEST-KEY',
+      deviceId: '1111-2222-3333-4444',
+      activatedAt: DateTime.now(),
+      expiresAt: DateTime.now().add(const Duration(days: 365)),
+      remainingOfflineDays: 30,
+    );
+    completer.complete(Right(info));
+    await Future<void>.delayed(Duration.zero);
+    expect(notifier.state.loadingState, LicenseLoadingState.licensed);
+
+    // Simulamos que la última verificación fue hace 35 minutos
+    fakeStorage.data[LicenseStorageKeys.lastLicenseCheckUtc] =
+        DateTime.now().toUtc().subtract(const Duration(minutes: 35)).toIso8601String();
+
+    // Al llamar a sync() revalida y, como no hay token en storage, pasa a unlicensed
+    await notifier.sync();
+    expect(notifier.state.loadingState, LicenseLoadingState.unlicensed);
+    expect(notifier.state.error, contains('No hay una licencia activa'));
+  });
+
+  test('LicenseNotifier sync detecta retroceso de reloj del sistema', () async {
+    final completer = Completer<Result<LicenseInfo>>();
+    final notifier = LicenseNotifier(manager, preloaded: completer.future);
+
+    final info = LicenseInfo(
+      status: LicenseStatus.active,
+      licenseKey: 'TEST-KEY',
+      deviceId: '1111-2222-3333-4444',
+      activatedAt: DateTime.now(),
+      expiresAt: DateTime.now().add(const Duration(days: 365)),
+      remainingOfflineDays: 30,
+    );
+    completer.complete(Right(info));
+    await Future<void>.delayed(Duration.zero);
+    expect(notifier.state.loadingState, LicenseLoadingState.licensed);
+
+    // Simulamos que lastCheck está 1 hora en el futuro (reloj retrocedido)
+    fakeStorage.data[LicenseStorageKeys.lastLicenseCheckUtc] =
+        DateTime.now().toUtc().add(const Duration(hours: 1)).toIso8601String();
+
+    await notifier.sync();
+    expect(notifier.state.loadingState, LicenseLoadingState.unlicensed);
+    expect(notifier.state.error, contains('retrocedió de forma anormal'));
   });
 }

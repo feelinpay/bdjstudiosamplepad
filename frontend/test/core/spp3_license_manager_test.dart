@@ -11,11 +11,13 @@ import '../../lib/core/errors/failures.dart';
 
 class MemorySecurityPort implements SecurityPort {
   final Map<String, String> storage = {};
+  final List<String> writtenKeys = [];
   bool simulateSelfTestFailure = false;
 
   @override
   Future<Result<void>> storeSecure(String key, String value) async {
     storage[key] = value;
+    writtenKeys.add(key);
     return const Right(null);
   }
 
@@ -228,6 +230,51 @@ void main() {
 
       final result = await licenseManager.activateLicense(token);
       expect(result.isLeft(), isTrue);
+    });
+
+    test('8. Escritura segura diferencial y registro de lastLicenseCheckUtc', () async {
+      final hwidHash = KeyHierarchy.hashHwid('1111-2222-3333-4444');
+      final payload = Spp3Payload(
+        licenseId: 'LIC-DIFF-8001',
+        customerId: 'CLIENT-DIFF',
+        deviceId: '1111-2222-3333-4444',
+        hwidHash: hwidHash,
+        productCode: 'bdj_studio_sample_pad',
+        exactVersion: '1.0.3',
+        plan: 'pro',
+        issuedAtUtc: DateTime.now().toUtc(),
+        expiresAtUtc: DateTime.now().toUtc().add(const Duration(days: 365)),
+      );
+
+      final token = await Spp3Token.issue(
+        payload: payload,
+        signerCertificate: adminCert,
+        operatorKeyPair: operatorKeyPair,
+      );
+
+      // 1. Primera activación: debe escribir todas las llaves requeridas
+      securityPort.writtenKeys.clear();
+      final actResult = await licenseManager.activateLicense(token);
+      expect(actResult.isRight(), isTrue);
+      expect(securityPort.writtenKeys, contains(LicenseStorageKeys.licenseKey));
+      expect(securityPort.writtenKeys, contains(LicenseStorageKeys.licenseStatus));
+      expect(securityPort.writtenKeys, contains(LicenseStorageKeys.deviceId));
+      expect(securityPort.writtenKeys, contains(LicenseStorageKeys.lastSyncAt));
+      expect(securityPort.writtenKeys, contains(LicenseStorageKeys.lastLicenseCheckUtc));
+
+      final firstCheck = await licenseManager.getLastLicenseCheckUtc();
+      expect(firstCheck, isNotNull);
+
+      // 2. Revalidación con datos idénticos: solo escribe lastSyncAt y lastLicenseCheckUtc
+      securityPort.writtenKeys.clear();
+      final valResult = await licenseManager.validateLicense();
+      expect(valResult.isRight(), isTrue);
+
+      expect(securityPort.writtenKeys, isNot(contains(LicenseStorageKeys.licenseKey)));
+      expect(securityPort.writtenKeys, isNot(contains(LicenseStorageKeys.licenseStatus)));
+      expect(securityPort.writtenKeys, isNot(contains(LicenseStorageKeys.deviceId)));
+      expect(securityPort.writtenKeys, contains(LicenseStorageKeys.lastSyncAt));
+      expect(securityPort.writtenKeys, contains(LicenseStorageKeys.lastLicenseCheckUtc));
     });
   });
 }

@@ -215,6 +215,21 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
   }
 
   Future<void> sync() async {
+    final lastCheck = await _manager.getLastLicenseCheckUtc();
+    final now = DateTime.now().toUtc();
+    if (lastCheck != null) {
+      if (now.isBefore(lastCheck.subtract(const Duration(minutes: 5)))) {
+        state = state.copyWith(
+          loadingState: LicenseLoadingState.unlicensed,
+          error: 'La fecha y hora del sistema retrocedió de forma anormal. Ajusta tu reloj a la hora real.',
+        );
+        return;
+      }
+      if (now.difference(lastCheck) < const Duration(minutes: 30)) {
+        return;
+      }
+    }
+
     _manager.clearFingerprintCache();
     try {
       final result = await _manager.syncLicense().timeout(_checkBudget);
