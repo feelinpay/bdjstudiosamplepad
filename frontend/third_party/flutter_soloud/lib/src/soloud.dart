@@ -22,6 +22,8 @@ import 'package:http/http.dart' as http;
 import 'package:logging/logging.dart';
 import 'package:meta/meta.dart';
 
+const bool _asyncInit = bool.fromEnvironment('BDJ_ASYNC_AUDIO_INIT');
+
 @pragma('vm:entry-point')
 void _loadFile(Map<String, dynamic> args) {
   SoLoudController().soLoudFFI.loadFile(
@@ -283,6 +285,12 @@ interface class SoLoud {
       _controller.soLoudFFI.isInited() &&
       _loader.isInitialized;
 
+  /// Returns the current state of an async initialization (-1 pending, >=0 PlayerErrors).
+  int initEngineStatus() => _controller.soLoudFFI.initEngineStatus();
+
+  /// Signals the native engine to abandon the in-flight initialization.
+  void abandonInitEngine() => _controller.soLoudFFI.abandonInitEngine();
+
   /// Backing of [activeSounds].
   final List<AudioSource> _activeSounds = [];
 
@@ -429,13 +437,38 @@ interface class SoLoud {
       androidAAudioAttributes == AndroidAAudioAttributes.mediaMusic,
     );
 
-    final error = _controller.soLoudFFI.initEngine(
-      device?.id ?? -1,
-      sampleRate,
-      bufferSize,
-      channels,
-      lowLatency,
-    );
+    final PlayerErrors error;
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android && _asyncInit) {
+      final started = _controller.soLoudFFI.initEngineAsync(
+        device?.id ?? -1,
+        sampleRate,
+        bufferSize,
+        channels,
+        lowLatency,
+      );
+      if (started != -1) {
+        throw SoLoudCppException.fromPlayerError(PlayerErrors.values[started]);
+      }
+      final sw = Stopwatch()..start();
+      var status = -1;
+      const initTimeout = Duration(seconds: 6);
+      while ((status = _controller.soLoudFFI.initEngineStatus()) == -1) {
+        if (sw.elapsed > initTimeout) {
+          _controller.soLoudFFI.abandonInitEngine();
+          throw TimeoutException('initEngine > $initTimeout');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      error = PlayerErrors.values[status];
+    } else {
+      error = _controller.soLoudFFI.initEngine(
+        device?.id ?? -1,
+        sampleRate,
+        bufferSize,
+        channels,
+        lowLatency,
+      );
+    }
     _logPlayerError(error, from: 'initialize() result');
     if (error == PlayerErrors.noError) {
       /// get the visualization flag from the player on C side.

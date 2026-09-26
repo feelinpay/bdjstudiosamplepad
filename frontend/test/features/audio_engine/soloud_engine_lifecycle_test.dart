@@ -129,4 +129,12 @@ void main() {
       expect(engine.engineState, AudioEngineState.disposed);
     });
   });
+
+  group('retryAudioInitialization', () {
+    test('retryAudioInitialization se ejecuta y devuelve resultado sin lanzar', () async {
+      await engine.initialize();
+      final result = await engine.retryAudioInitialization(null);
+      expect(result, isNotNull);
+    });
+  });
 }

@@ -15,14 +15,21 @@
 #endif
 
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <memory.h>
 #include <memory>
 #include <stdio.h>
+#include <thread>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// Estados: -1 = pendiente, >=0 = PlayerErrors final
+static std::atomic<int> gInitStatus{0};
+static std::atomic<bool> gInitBusy{false};
+static std::atomic<bool> gInitAbandoned{false};
 
 /// mutex to lock the init and dispose methods.
 std::mutex init_deinit_mutex;
@@ -153,7 +160,7 @@ FFI_PLUGIN_EXPORT void voiceEndedCallback(unsigned int *handle) {
         // [e,name,n] pointers must be deleted on Dart.
         PlayerErrors *e = (PlayerErrors *)malloc(sizeof(PlayerErrors));
         *e = error;
-        char *name = strdup(completeFileName);
+        char *name = soloudDuplicateString(completeFileName);
         unsigned int *n = (unsigned int *)malloc(sizeof(unsigned int));
         *n = *hash;
         uint64_t *ts = (uint64_t *)malloc(sizeof(uint64_t));
@@ -210,19 +217,11 @@ FFI_PLUGIN_EXPORT bool areXiphLibsAvailable() {
 #endif
 }
 
-/// Initialize the player. Must be called before any other player functions.
-///
-/// [sampleRate] the sample rate. Usually is 22050, 44100 (CD quality) or 48000.
-/// [bufferSize] the audio buffer size. Usually is 2048, but can be also 512
-/// when low latency is needed for example in games. [channels] 1=mono,
-/// 2=stereo, 4=quad, 6=5.1, 8=7.1.
-///
-/// Returns [PlayerErrors.noError] if success.
-FFI_PLUGIN_EXPORT enum PlayerErrors initEngine(int deviceID,
-                                               unsigned int sampleRate,
-                                               unsigned int bufferSize,
-                                               unsigned int channels,
-                                               unsigned int lowLatency) {
+static PlayerErrors _doInitEngine(int deviceID,
+                                  unsigned int sampleRate,
+                                  unsigned int bufferSize,
+                                  unsigned int channels,
+                                  unsigned int lowLatency) {
   std::lock_guard<std::mutex> guard(init_deinit_mutex);
   std::lock_guard<std::mutex> guard_load(loadMutex);
 
@@ -245,8 +244,65 @@ FFI_PLUGIN_EXPORT enum PlayerErrors initEngine(int deviceID,
   // Set the callback for when a voice is ended/stopped
   player.get()->setVoiceEndedCallback(voiceEndedCallback);
 
-        return PlayerErrors::noError;
+  return PlayerErrors::noError;
+}
+
+/// Initialize the player synchronously.
+FFI_PLUGIN_EXPORT enum PlayerErrors initEngine(int deviceID,
+                                               unsigned int sampleRate,
+                                               unsigned int bufferSize,
+                                               unsigned int channels,
+                                               unsigned int lowLatency) {
+  return _doInitEngine(deviceID, sampleRate, bufferSize, channels, lowLatency);
+}
+
+/// Initialize the player asynchronously in a background thread.
+/// Returns -1 if successfully started or PlayerErrors code if already busy.
+FFI_PLUGIN_EXPORT int initEngineAsync(int deviceID,
+                                      unsigned int sampleRate,
+                                      unsigned int bufferSize,
+                                      unsigned int channels,
+                                      unsigned int lowLatency) {
+  bool expected = false;
+  if (!gInitBusy.compare_exchange_strong(expected, true)) {
+    return (int)PlayerErrors::unknownError;
+  }
+  gInitAbandoned.store(false);
+  gInitStatus.store(-1);
+
+  std::thread([=]() {
+#ifdef BDJ_DEBUG_AUDIO_OPEN_DELAY_MS
+    std::this_thread::sleep_for(std::chrono::milliseconds(BDJ_DEBUG_AUDIO_OPEN_DELAY_MS));
+#endif
+    int r = (int)_doInitEngine(deviceID, sampleRate, bufferSize, channels, lowLatency);
+    if (gInitAbandoned.load()) {
+      if (r == (int)PlayerErrors::noError) {
+        std::lock_guard<std::mutex> guard(init_deinit_mutex);
+        std::lock_guard<std::mutex> guard_load(loadMutex);
+        if (player.get() != nullptr) {
+          player.get()->dispose();
+          player.reset();
+          player = std::make_unique<Player>();
+        }
+      }
+      r = (int)PlayerErrors::unknownError;
     }
+    gInitStatus.store(r);
+    gInitBusy.store(false);
+  }).detach();
+
+  return -1;
+}
+
+/// Returns current initialization status: -1 = pending, >=0 = PlayerErrors code.
+FFI_PLUGIN_EXPORT int initEngineStatus() {
+  return gInitStatus.load();
+}
+
+/// Abandons ongoing async initialization.
+FFI_PLUGIN_EXPORT void abandonInitEngine() {
+  gInitAbandoned.store(true);
+}
 
 /// Android only: choose whether SoLoud tags the AAudio stream's
 /// usage/contentType (media/music) or leaves them unset so the app can manage
@@ -261,7 +317,7 @@ FFI_PLUGIN_EXPORT void setAndroidAAudioAttributes(unsigned int managed) {
 ///
 /// [deviceID] the device ID. -1 for default OS output device.
 FFI_PLUGIN_EXPORT enum PlayerErrors changeDevice(int deviceID) {
-  if (player.get() == nullptr)
+  if (gInitBusy.load() || player.get() == nullptr)
     return backendNotInited;
 
   return player.get()->changeDevice(deviceID);
@@ -270,6 +326,10 @@ FFI_PLUGIN_EXPORT enum PlayerErrors changeDevice(int deviceID) {
 /// List playback devices.
 FFI_PLUGIN_EXPORT void listPlaybackDevices(char **devicesName, int **deviceId,
                                            int **isDefault, int *n_devices) {
+  if (gInitBusy.load() || player.get() == nullptr) {
+    *n_devices = 0;
+    return;
+  }
   std::vector<PlaybackDevice> d = player.get()->listPlaybackDevices();
 
   int numDevices = 0;
@@ -288,7 +348,7 @@ FFI_PLUGIN_EXPORT void listPlaybackDevices(char **devicesName, int **deviceId,
     if (strlen(d[i].name) <= 5 || hasSpecialChar)
       continue;
 
-    devicesName[numDevices] = strdup(d[i].name);
+    devicesName[numDevices] = soloudDuplicateString(d[i].name);
     isDefault[numDevices] = (int *)malloc(sizeof(int));
     *isDefault[numDevices] = d[i].isDefault;
     deviceId[numDevices] = (int *)malloc(sizeof(int));
@@ -314,6 +374,10 @@ FFI_PLUGIN_EXPORT void freeListPlaybackDevices(char **devicesName,
 /// app
 ///
 FFI_PLUGIN_EXPORT void dispose() {
+  if (gInitBusy.load()) {
+    gInitAbandoned.store(true);
+    return;
+  }
   if (player.get() == nullptr)
     return;
   player.get()->disposeAllSound();
@@ -331,7 +395,7 @@ FFI_PLUGIN_EXPORT void dispose() {
 }
 
 FFI_PLUGIN_EXPORT int isInited() {
-  if (player.get() == nullptr)
+  if (gInitBusy.load() || player.get() == nullptr)
     return 0;
   return player.get()->isInited() ? 1 : 0;
 }
@@ -357,6 +421,14 @@ FFI_PLUGIN_EXPORT int isInited() {
         bool loadIntoMem,
         uint64_t counter)
     {
+        if (gInitBusy.load()) {
+            unsigned int hash = 0;
+            if (dartFileLoadedCallback.load() != nullptr) {
+                PlayerErrors err = backendNotInited;
+                fileLoadedCallback(err, completeFileName, &hash, counter);
+            }
+            return;
+        }
         std::lock_guard<std::mutex> guard_init(init_deinit_mutex);
         std::lock_guard<std::mutex> guard_load(loadMutex);
 
@@ -858,6 +930,14 @@ FFI_PLUGIN_EXPORT void setLoopPoint(unsigned int handle, double time) {
   player.get()->setLoopPoint(handle, time);
 }
 
+/// Set sound loop end value. A value of zero uses the source end.
+FFI_PLUGIN_EXPORT void setLoopEndPoint(unsigned int handle, double time) {
+  if (player.get() == nullptr || !player.get()->isInited() ||
+      !player.get()->isValidHandle(handle))
+    return;
+  player.get()->setLoopEndPoint(handle, time);
+}
+
 /// Enable or disable visualization
 ///
 /// [enabled] enable or disable it
@@ -1086,7 +1166,7 @@ FFI_PLUGIN_EXPORT void setPan(unsigned int handle, double pan) {
   if (player.get() == nullptr || !player.get()->isInited())
     return;
   // Rounding to 6 decimal to work around the float to double precision.
-  player.get()->setPan(handle, pan);
+  player.get()->setPan(handle, static_cast<float>(pan));
 }
 
 /// Set the left/right volumes directly.
@@ -1099,7 +1179,8 @@ FFI_PLUGIN_EXPORT void setPanAbsolute(unsigned int handle, double panLeft,
                                       double panRight) {
   if (player.get() == nullptr || !player.get()->isInited())
     return;
-  player.get()->setPanAbsolute(handle, panLeft, panRight);
+  player.get()->setPanAbsolute(
+      handle, static_cast<float>(panLeft), static_cast<float>(panRight));
 }
 
 /// Check if a handle is still valid.
@@ -1209,7 +1290,7 @@ FFI_PLUGIN_EXPORT void setMaxActiveVoiceCount(unsigned int maxVoiceCount) {
 /// Used to create a new voice group. Returns 0 if not successful.
 FFI_PLUGIN_EXPORT unsigned int createVoiceGroup() {
   if (player.get() == nullptr || !player.get()->isInited())
-    return -1;
+    return static_cast<unsigned int>(-1);
   auto ret = player.get()->createVoiceGroup();
   return ret;
 }
@@ -1405,7 +1486,7 @@ getFilterParamNames(enum FilterType filterType, int *paramsCount,
   *names = (char *)malloc(sizeof(char *) * *paramsCount);
   // printf("C  paramsCount: %p  **names: %p\n", paramsCount, names);
   for (int i = 0; i < *paramsCount; i++) {
-    names[i] = strdup(pNames[i].c_str());
+    names[i] = soloudDuplicateString(pNames[i].c_str());
     printf("C  i: %d  names[i]: %s  names[i]: %p\n", i, names[i], names[i]);
   }
   return noError;

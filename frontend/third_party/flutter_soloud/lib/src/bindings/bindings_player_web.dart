@@ -136,6 +136,23 @@ class FlutterSoLoudWeb extends FlutterSoLoud {
   }
 
   @override
+  int initEngineAsync(
+    int deviceId,
+    int sampleRate,
+    int bufferSize,
+    Channels channels,
+    bool lowLatency,
+  ) {
+    return initEngine(deviceId, sampleRate, bufferSize, channels, lowLatency).index;
+  }
+
+  @override
+  int initEngineStatus() => 0;
+
+  @override
+  void abandonInitEngine() {}
+
+  @override
   void setAndroidAAudioAttributes(bool managed) {
     // No-op on web: AAudio stream attributes are Android-only.
   }

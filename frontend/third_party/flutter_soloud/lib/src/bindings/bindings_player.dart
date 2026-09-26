@@ -88,6 +88,25 @@ abstract class FlutterSoLoud {
     bool lowLatency,
   );
 
+  /// Asynchronously initialize the engine in a background thread.
+  /// Returns -1 on success (started) or PlayerErrors index if busy.
+  @mustBeOverridden
+  int initEngineAsync(
+    int deviceId,
+    int sampleRate,
+    int bufferSize,
+    Channels channels,
+    bool lowLatency,
+  );
+
+  /// Returns async init status: -1 = pending, >=0 = PlayerErrors code.
+  @mustBeOverridden
+  int initEngineStatus();
+
+  /// Abandons ongoing async init.
+  @mustBeOverridden
+  void abandonInitEngine();
+
   /// Android only: when [managed] is true (default) SoLoud tags the AAudio
   /// stream as media/music; when false it leaves usage/contentType unset so the
   /// app can manage AudioAttributes externally (e.g. via audio_session). Only

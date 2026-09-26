@@ -238,9 +238,9 @@ class SoLoudAudioEngine implements AudioEnginePort {
                 lowLatency: attempt.lowLatency,
               )
               .timeout(
-                const Duration(seconds: 8),
+                const Duration(seconds: 6),
                 onTimeout: () => throw TimeoutException(
-                  'SoLoud.init() exceeded 8 s '
+                  'SoLoud.init() exceeded 6 s '
                   '(lowLatency=${attempt.lowLatency}, '
                   'sr=${attempt.sampleRate}, buf=${attempt.bufferSize})',
                 ),
@@ -257,6 +257,13 @@ class SoLoudAudioEngine implements AudioEnginePort {
           try {
             if (_soloud!.isInitialized) _soloud!.deinit();
           } catch (_) {}
+          if (Platform.isAndroid && _soloud != null) {
+            final drainSw = Stopwatch()..start();
+            while (_soloud!.initEngineStatus() == -1 &&
+                drainSw.elapsedMilliseconds < 1500) {
+              await Future<void>.delayed(const Duration(milliseconds: 50));
+            }
+          }
         }
       }
       StartupTimeline.mark('audio_device_open_end');
@@ -468,6 +475,14 @@ class SoLoudAudioEngine implements AudioEnginePort {
         _soloud!.deinit();
       } catch (e, st) {
         debugPrint('[AudioEngine] deinit during retry failed: $e\n$st');
+      }
+    }
+
+    if (Platform.isAndroid && _soloud != null) {
+      final drainSw = Stopwatch()..start();
+      while (_soloud!.initEngineStatus() == -1 &&
+          drainSw.elapsedMilliseconds < 1500) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
       }
     }
 

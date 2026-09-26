@@ -293,6 +293,58 @@ class FlutterSoLoudFfi extends FlutterSoLoud {
       .asFunction<int Function(int, int, int, int, int)>();
 
   @override
+  int initEngineAsync(
+    int deviceId,
+    int sampleRate,
+    int bufferSize,
+    Channels channels,
+    bool lowLatency,
+  ) {
+    return _initEngineAsync(
+      deviceId,
+      sampleRate,
+      bufferSize,
+      channels.count,
+      lowLatency ? 1 : 0,
+    );
+  }
+
+  late final _initEngineAsyncPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Int,
+            ffi.UnsignedInt,
+            ffi.UnsignedInt,
+            ffi.UnsignedInt,
+            ffi.UnsignedInt,
+          )
+        >
+      >('initEngineAsync');
+  late final _initEngineAsync = _initEngineAsyncPtr
+      .asFunction<int Function(int, int, int, int, int)>();
+
+  @override
+  int initEngineStatus() {
+    return _initEngineStatus();
+  }
+
+  late final _initEngineStatusPtr =
+      _lookup<ffi.NativeFunction<ffi.Int32 Function()>>('initEngineStatus');
+  late final _initEngineStatus =
+      _initEngineStatusPtr.asFunction<int Function()>();
+
+  @override
+  void abandonInitEngine() {
+    _abandonInitEngine();
+  }
+
+  late final _abandonInitEnginePtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function()>>('abandonInitEngine');
+  late final _abandonInitEngine =
+      _abandonInitEnginePtr.asFunction<void Function()>();
+
+  @override
   void setAndroidAAudioAttributes(bool managed) {
     _setAndroidAAudioAttributes(managed ? 1 : 0);
   }
