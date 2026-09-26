@@ -315,18 +315,25 @@ void main() {
       );
     });
 
-    test('10. Salto anomalo hacia el futuro (>48h) no escribe lastLicenseCheckUtc para no envenenar la clave', () async {
+    test('10. Ausencia de 7 dias: lastLicenseCheckUtc avanza con trinquete de 48h y no queda congelado', () async {
+      var simulatedTime = DateTime.now().toUtc();
+      final timedManager = LicenseManager(
+        secureStorage: securityPort,
+        fingerprint: fingerprint,
+        clock: () => simulatedTime,
+      );
+
       final hwidHash = KeyHierarchy.hashHwid('1111-2222-3333-4444');
       final payload = Spp3Payload(
-        licenseId: 'LIC-FUTURE-1001',
-        customerId: 'CLIENT-FUTURE',
+        licenseId: 'LIC-ABSENCE-1001',
+        customerId: 'CLIENT-ABSENCE',
         deviceId: '1111-2222-3333-4444',
         hwidHash: hwidHash,
         productCode: 'bdj_studio_sample_pad',
         exactVersion: '1.0.3',
         plan: 'pro',
-        issuedAtUtc: DateTime.now().toUtc(),
-        expiresAtUtc: DateTime.now().toUtc().add(const Duration(days: 365)),
+        issuedAtUtc: simulatedTime,
+        expiresAtUtc: simulatedTime.add(const Duration(days: 365)),
       );
 
       final token = await Spp3Token.issue(
@@ -335,19 +342,73 @@ void main() {
         operatorKeyPair: operatorKeyPair,
       );
 
-      await licenseManager.activateLicense(token);
+      final actResult = await timedManager.activateLicense(token);
+      expect(actResult.isRight(), isTrue);
+      expect(securityPort.storage[LicenseStorageKeys.lastLicenseCheckUtc], equals(simulatedTime.toIso8601String()));
 
-      // Colocamos un lastCheck conocido hace 3 días (72h en el pasado respecto a now)
-      final pastCheck = DateTime.now().toUtc().subtract(const Duration(hours: 72));
-      securityPort.storage[LicenseStorageKeys.lastLicenseCheckUtc] = pastCheck.toIso8601String();
+      // Simular ausencia de 7 días sin abrir la app
+      final initialCheck = simulatedTime;
+      simulatedTime = simulatedTime.add(const Duration(days: 7));
       securityPort.writtenKeys.clear();
 
-      // Al validar ahora (now está a +72h respecto a pastCheck, > 48h de salto):
-      final valResult = await licenseManager.validateLicense();
+      final valResult = await timedManager.validateLicense();
       expect(valResult.isRight(), isTrue);
-      // NO debe haberse sobrescrito lastLicenseCheckUtc con el valor lejano
-      expect(securityPort.writtenKeys, isNot(contains(LicenseStorageKeys.lastLicenseCheckUtc)));
-      expect(securityPort.storage[LicenseStorageKeys.lastLicenseCheckUtc], equals(pastCheck.toIso8601String()));
+
+      // El trinquete no debe dejar congelado lastLicenseCheckUtc en el día 0,
+      // sino que debe haber avanzado un máximo de 48h desde la última comprobación
+      final expectedCapped = initialCheck.add(const Duration(hours: 48));
+      expect(securityPort.writtenKeys, contains(LicenseStorageKeys.lastLicenseCheckUtc));
+      expect(securityPort.storage[LicenseStorageKeys.lastLicenseCheckUtc], equals(expectedCapped.toIso8601String()));
+    });
+
+    test('11. Salto de +5 anos y correccion: no envenena el trinquete y la app no se bloquea al corregir la hora', () async {
+      var simulatedTime = DateTime.now().toUtc();
+      final timedManager = LicenseManager(
+        secureStorage: securityPort,
+        fingerprint: fingerprint,
+        clock: () => simulatedTime,
+      );
+
+      final hwidHash = KeyHierarchy.hashHwid('1111-2222-3333-4444');
+      final payload = Spp3Payload(
+        licenseId: 'LIC-FUTURE-1101',
+        customerId: 'CLIENT-FUTURE',
+        deviceId: '1111-2222-3333-4444',
+        hwidHash: hwidHash,
+        productCode: 'bdj_studio_sample_pad',
+        exactVersion: '1.0.3',
+        plan: 'pro',
+        issuedAtUtc: simulatedTime,
+        // Expira en 10 años para que el token siga siendo criptográficamente válido durante el salto
+        expiresAtUtc: simulatedTime.add(const Duration(days: 3650)),
+      );
+
+      final token = await Spp3Token.issue(
+        payload: payload,
+        signerCertificate: adminCert,
+        operatorKeyPair: operatorKeyPair,
+      );
+
+      final actResult = await timedManager.activateLicense(token);
+      expect(actResult.isRight(), isTrue);
+      final initialCheck = simulatedTime;
+
+      // 1. Reloj salta 5 años hacia el futuro (ej. error de BIOS o ajuste manual erróneo)
+      simulatedTime = simulatedTime.add(const Duration(days: 365 * 5));
+      final valResultFuture = await timedManager.validateLicense();
+      expect(valResultFuture.isRight(), isTrue);
+
+      // Se guarda lastCheck + 48h, NO la fecha de dentro de 5 años
+      final cappedDate = initialCheck.add(const Duration(hours: 48));
+      expect(securityPort.storage[LicenseStorageKeys.lastLicenseCheckUtc], equals(cappedDate.toIso8601String()));
+
+      // 2. El usuario corrige la hora a la fecha real (ej. 3 días después de la inicial: initialCheck + 72h)
+      simulatedTime = initialCheck.add(const Duration(hours: 72));
+      final valResultCorrected = await timedManager.validateLicense();
+
+      // Debe ser VÁLIDA: no queda bloqueada por un supuesto retroceso de 5 años
+      expect(valResultCorrected.isRight(), isTrue);
+      expect(valResultCorrected.toOption().toNullable()?.status, equals(LicenseStatus.active));
     });
   });
 }

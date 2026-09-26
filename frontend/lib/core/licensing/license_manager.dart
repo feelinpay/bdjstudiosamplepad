@@ -28,6 +28,7 @@ class LicenseManager implements LicensingPort {
   final DeviceFingerprint _fingerprint;
   final String productCode;
   final String defaultAppVersion;
+  final DateTime Function() _clock;
 
   LicenseStatus _currentStatus = LicenseStatus.none;
   String? _cachedFingerprint;
@@ -38,8 +39,10 @@ class LicenseManager implements LicensingPort {
     required DeviceFingerprint fingerprint,
     this.productCode = 'bdj_studio_sample_pad',
     this.defaultAppVersion = '1.0.3',
+    DateTime Function()? clock,
   }) : _secureStorage = secureStorage,
-       _fingerprint = fingerprint;
+       _fingerprint = fingerprint,
+       _clock = clock ?? DateTime.now;
 
   @override
   LicenseStatus get currentStatus => _currentStatus;
@@ -188,6 +191,7 @@ class LicenseManager implements LicensingPort {
         expectedProductCode: productCode,
         expectedVersion: appVersion,
         currentHwidHash: hwidHash,
+        currentClockUtc: _clock().toUtc(),
       );
 
       if (!result.isValid) {
@@ -196,7 +200,7 @@ class LicenseManager implements LicensingPort {
       }
 
       final payload = result.payload!;
-      final now = DateTime.now().toUtc();
+      final now = _clock().toUtc();
 
       // Protección contra retroceso de reloj (Anti-Tamper / Time Travel Protection)
       final lastCheckResult = await _secureStorage.readSecure(LicenseStorageKeys.lastLicenseCheckUtc);
@@ -219,15 +223,17 @@ class LicenseManager implements LicensingPort {
         deviceId: fingerprint,
       );
 
-      // Si el reloj salta más de 48h hacia adelante de forma anómala (ej. BIOS agotada o fecha errónea en el futuro),
-      // no escribimos lastLicenseCheckUtc en esa pasada para evitar que al corregir la hora la licencia quede bloqueada.
-      final isAnomalousFutureJump = lastCheck != null && now.isAfter(lastCheck.add(const Duration(hours: 48)));
-      if (!isAnomalousFutureJump) {
-        await _secureStorage.storeSecure(
-          LicenseStorageKeys.lastLicenseCheckUtc,
-          now.toIso8601String(),
-        );
-      }
+      // Trinquete con tope de 48h para lastLicenseCheckUtc:
+      // Si la app estuvo cerrada más de 48h (ej. ausencia de 7 días) o el reloj saltó al futuro,
+      // el valor guardado avanza como máximo 48h respecto a la última comprobación.
+      // Esto evita congelar el timestamp o envenenarlo con años futuros si la hora salta anormalmente.
+      final capped = lastCheck == null
+          ? now
+          : _minDate(now, lastCheck.add(const Duration(hours: 48)));
+      await _secureStorage.storeSecure(
+        LicenseStorageKeys.lastLicenseCheckUtc,
+        capped.toIso8601String(),
+      );
 
       _currentStatus = LicenseStatus.active;
       return Right(
@@ -292,7 +298,9 @@ class LicenseManager implements LicensingPort {
 
     await _secureStorage.storeSecure(
       LicenseStorageKeys.lastSyncAt,
-      DateTime.now().toIso8601String(),
+      _clock().toIso8601String(),
     );
   }
+
+  static DateTime _minDate(DateTime a, DateTime b) => a.isBefore(b) ? a : b;
 }
