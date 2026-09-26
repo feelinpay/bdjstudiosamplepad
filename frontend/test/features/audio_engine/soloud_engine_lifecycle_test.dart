@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:bdj_studio_sample_pad/core/audio/audio_engine_state.dart';
+import 'package:bdj_studio_sample_pad/core/audio/audio_load_request.dart';
 import 'package:bdj_studio_sample_pad/core/audio/trigger_mode.dart';
 import 'package:bdj_studio_sample_pad/features/audio_engine/data/soloud_audio_engine.dart';
 
@@ -135,6 +136,38 @@ void main() {
       await engine.initialize();
       final result = await engine.retryAudioInitialization(null);
       expect(result, isNotNull);
+    });
+  });
+
+  group('presupuesto de memoria y modo de carga (T19)', () {
+    test('setSoundCacheBudget configura el presupuesto de la cache sin lanzar', () async {
+      await engine.initialize();
+      expect(() => engine.setSoundCacheBudget(64 * 1024 * 1024), returnsNormally);
+      expect(() => engine.setSoundCacheCapacity(25), returnsNormally);
+    });
+
+    test('loadAudio acepta needsRandomAccess sin lanzar', () async {
+      await engine.initialize();
+      expect(
+        () => engine.loadAudio('pad-1', 'assets/audio/test.wav', needsRandomAccess: true),
+        returnsNormally,
+      );
+    });
+
+    test('preloadAll acepta List<AudioLoadRequest> y Map<String, String>', () async {
+      await engine.initialize();
+      expect(
+        () => engine.preloadAll([
+          const AudioLoadRequest(id: 'pad-1', path: 'path/1.wav', needsRandomAccess: true),
+          const AudioLoadRequest(id: 'pad-2', path: 'path/2.wav', needsRandomAccess: false),
+        ]),
+        returnsNormally,
+      );
+
+      expect(
+        () => engine.preloadAll({'pad-3': 'path/3.wav'}),
+        returnsNormally,
+      );
     });
   });
 }

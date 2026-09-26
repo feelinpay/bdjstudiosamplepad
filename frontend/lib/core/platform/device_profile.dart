@@ -84,6 +84,9 @@ class DeviceProfile {
     required this.summary,
   });
 
+  /// Presupuesto de memoria para la caché en bytes.
+  int get cacheBudgetBytes => cacheBudgetMb * 1024 * 1024;
+
   @override
   String toString() =>
       'DeviceProfile(tier: ${tier.name}, override: ${performanceOverride.name}, '

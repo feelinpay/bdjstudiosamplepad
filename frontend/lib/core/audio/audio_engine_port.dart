@@ -38,12 +38,16 @@ abstract class AudioEnginePort {
   AudioEngineState get engineState;
 
   void setSoundCacheCapacity(int capacity);
-  bool isLoaded(String id);
-  Future<void> loadAudio(String id, String assetPath);
 
-  /// Sustituye la cola de precarga con [idToPath] y no espera a que termine.
-  /// Descarta los audios pendientes de la precarga anterior.
-  Future<void> preloadAll(Map<String, String> idToPath);
+  /// Configura el presupuesto de memoria de la caché en bytes según el perfil de hardware.
+  void setSoundCacheBudget(int bytes);
+
+  bool isLoaded(String id);
+  Future<void> loadAudio(String id, String assetPath, {bool needsRandomAccess = false});
+
+  /// Sustituye la cola de precarga con [requests] (List<AudioLoadRequest> o Map<String, String>)
+  /// y no espera a que termine. Descarta los audios pendientes de la precarga anterior.
+  Future<void> preloadAll(dynamic requests);
   void play(
     String id,
     TriggerMode mode, {

@@ -164,13 +164,16 @@ class MockAudioEngine implements AudioEnginePort {
   void setSoundCacheCapacity(int capacity) {}
 
   @override
+  void setSoundCacheBudget(int bytes) {}
+
+  @override
   bool isLoaded(String id) => true;
 
   @override
-  Future<void> loadAudio(String id, String assetPath) async {}
+  Future<void> loadAudio(String id, String assetPath, {bool needsRandomAccess = false}) async {}
 
   @override
-  Future<void> preloadAll(Map<String, String> idToPath) async {}
+  Future<void> preloadAll(dynamic requests) async {}
 
   @override
   void play(

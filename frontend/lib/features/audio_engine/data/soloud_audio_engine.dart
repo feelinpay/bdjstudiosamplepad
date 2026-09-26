@@ -11,6 +11,8 @@ import '../../../core/platform/device_tier.dart';
 import '../../../core/services/local_audio_storage_service.dart';
 import '../../../core/utils/lru_cache.dart';
 import '../../../core/utils/audio_log.dart';
+import '../../../core/audio/audio_duration_estimator.dart';
+import '../../../core/audio/audio_load_request.dart';
 import '../../../core/diagnostics/startup_timeline.dart';
 import 'audio_load_scheduler.dart';
 
@@ -32,7 +34,12 @@ class SoLoudAudioEngine implements AudioEnginePort {
   Completer<void>? _initCompleter;
   bool _isInitialized = false;
   int? _pendingCacheCapacity;
+  int? _pendingCacheBudget;
+  int _maxAudioCacheBytes = DeviceTierDetector.profile.cacheBudgetBytes;
+  int _deferredBytes = 0;
   late LruCache<String, AudioSource> _loadedSounds;
+  static final Expando<int> _sourceBytesExpando = Expando<int>('sourceBytes');
+  final Map<String, LoadMode> _loadedModes = {};
 
   /// `_loadedSounds` es `late` y solo existe tras `_doInitialize`. Un golpe de
   /// pad o una nota MIDI pueden llegar antes de que termine el arranque, así
@@ -64,7 +71,11 @@ class SoLoudAudioEngine implements AudioEnginePort {
 
   late final AudioLoadScheduler _preloadScheduler = AudioLoadScheduler(
     maxConcurrent: _calculateMaxConcurrentLoads(),
-    load: loadAudio,
+    load: (AudioLoadRequest req) => loadAudio(
+      req.id,
+      req.path,
+      needsRandomAccess: req.needsRandomAccess,
+    ),
   );
 
   static int _calculateMaxConcurrentLoads() {
@@ -81,6 +92,27 @@ class SoLoudAudioEngine implements AudioEnginePort {
   @override
   void setSoundCacheCapacity(int capacity) {
     _pendingCacheCapacity = capacity;
+    if (_cacheReady) {
+      _loadedSounds.resize(capacity);
+    }
+  }
+
+  @override
+  void setSoundCacheBudget(int bytes) {
+    _pendingCacheBudget = bytes;
+    _maxAudioCacheBytes = bytes;
+    _updateCacheWeightBudget();
+  }
+
+  int _effectiveCacheBudget() {
+    final eff = _maxAudioCacheBytes - _deferredBytes;
+    return eff > 0 ? eff : 0;
+  }
+
+  void _updateCacheWeightBudget() {
+    if (_cacheReady) {
+      _loadedSounds.setMaxWeight(_effectiveCacheBudget());
+    }
   }
 
   SoLoudAudioEngine() {
@@ -171,8 +203,13 @@ class SoLoudAudioEngine implements AudioEnginePort {
     if (_cacheReady) {
       _loadedSounds.clear();
     }
+    _maxAudioCacheBytes =
+        _pendingCacheBudget ?? DeviceTierDetector.profile.cacheBudgetBytes;
+    _deferredBytes = 0;
     _loadedSounds = LruCache<String, AudioSource>(
       _pendingCacheCapacity ?? DeviceTierDetector.soundCacheCapacity,
+      weigh: (source) => _sourceBytesExpando[source] ?? (256 * 1024),
+      maxWeight: _effectiveCacheBudget(),
       onEvict: (id, source) {
         _deferDisposeSource(id, source);
       },
@@ -597,11 +634,15 @@ class SoLoudAudioEngine implements AudioEnginePort {
   final Set<String> _loadingIds = {};
 
   void _deferDisposeSource(String id, AudioSource source) {
+    final bytes = _sourceBytesExpando[source] ?? (256 * 1024);
     if (_activeHandles.containsKey(id) && _activeHandles[id]!.isNotEmpty) {
       _deferredDisposeSources[id] = source;
       _loadedPaths.remove(id);
+      _loadedModes.remove(id);
+      _deferredBytes += bytes;
+      _updateCacheWeightBudget();
       AudioLog.log(
-        '[SoLoud] onEvict: DEFERRED id=$id (playback still active, handles=${_activeHandles[id]!.length})',
+        '[SoLoud] onEvict: DEFERRED id=$id (playback still active, handles=${_activeHandles[id]!.length}, deferredBytes=$_deferredBytes)',
       );
       return;
     }
@@ -610,6 +651,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
       _activeHandles.remove(id);
     }
     _loadedPaths.remove(id);
+    _loadedModes.remove(id);
     AudioLog.log(
       '[SoLoud] onEvict: DISPOSING id=$id immediately (no active handles)',
     );
@@ -619,8 +661,12 @@ class SoLoudAudioEngine implements AudioEnginePort {
   void _disposeDeferredSource(String id) {
     final source = _deferredDisposeSources.remove(id);
     if (source == null) return;
+    final bytes = _sourceBytesExpando[source] ?? (256 * 1024);
+    _deferredBytes -= bytes;
+    if (_deferredBytes < 0) _deferredBytes = 0;
+    _updateCacheWeightBudget();
     AudioLog.log(
-      '[SoLoud] _disposeDeferredSource: disposing deferred source for id=$id',
+      '[SoLoud] _disposeDeferredSource: disposing deferred source for id=$id, deferredBytes=$_deferredBytes',
     );
     _scheduleDisposeSource(source);
   }
@@ -654,23 +700,35 @@ class SoLoudAudioEngine implements AudioEnginePort {
   }
 
   @override
-  Future<void> loadAudio(String id, String assetPath) async {
+  Future<void> loadAudio(
+    String id,
+    String assetPath, {
+    bool needsRandomAccess = false,
+  }) async {
     if (AudioLog.verbose) {
       final inCache = _cacheReady && _loadedSounds.containsKey(id);
       AudioLog.log(
-        '[SoLoud] loadAudio: id=$id path=$assetPath inCache=$inCache inFlight=${_loadingIds.contains(id)}',
+        '[SoLoud] loadAudio: id=$id path=$assetPath needsRandomAccess=$needsRandomAccess inCache=$inCache inFlight=${_loadingIds.contains(id)}',
       );
     }
     if (_loadingIds.contains(id)) return;
     _loadingIds.add(id);
     try {
-      await _loadAudioInternal(id, assetPath);
+      await _loadAudioInternal(
+        id,
+        assetPath,
+        needsRandomAccess: needsRandomAccess,
+      );
     } finally {
       _loadingIds.remove(id);
     }
   }
 
-  Future<void> _loadAudioInternal(String id, String assetPath) async {
+  Future<void> _loadAudioInternal(
+    String id,
+    String assetPath, {
+    bool needsRandomAccess = false,
+  }) async {
     await _ensureInitialized();
     if (_audioDisabled || _soloud == null) {
       AudioLog.log('[SoLoud] loadAudio: SKIPPED id=$id (disabled or null)');
@@ -680,19 +738,27 @@ class SoLoudAudioEngine implements AudioEnginePort {
     AudioLog.log('[SoLoud] loadAudio: resolvedPath=$resolvedPath');
 
     if (_loadedSounds.containsKey(id) && _loadedPaths[id] == resolvedPath) {
-      _loadedSounds.get(id);
-      AudioLog.log('[SoLoud] loadAudio: CACHE HIT id=$id (same path)');
-      return;
+      if (!needsRandomAccess || _loadedModes[id] == LoadMode.memory) {
+        _loadedSounds.get(id);
+        AudioLog.log(
+          '[SoLoud] loadAudio: CACHE HIT id=$id (same path, mode=${_loadedModes[id]})',
+        );
+        return;
+      }
+      AudioLog.log(
+        '[SoLoud] loadAudio: PROMOTING TO MEMORY id=$id (was disk, now needsRandomAccess)',
+      );
     }
 
     if (_loadedSounds.containsKey(id)) {
       AudioLog.log(
-        '[SoLoud] loadAudio: CACHE COLLISION id=$id (different path), stopping old',
+        '[SoLoud] loadAudio: CACHE COLLISION id=$id (different path or mode), stopping old',
       );
       stop(id, notify: false);
       // `remove` ya dispara onEvict, que libera la fuente anterior.
       _loadedSounds.remove(id);
       _loadedPaths.remove(id);
+      _loadedModes.remove(id);
       _activeHandles.remove(id);
     }
 
@@ -709,22 +775,48 @@ class SoLoudAudioEngine implements AudioEnginePort {
 
     try {
       AudioSource source;
+      LoadMode mode = LoadMode.memory;
+      Duration? estimatedDuration;
+
       if (_isAbsolutePath(resolvedPath)) {
-        if (!await File(resolvedPath).exists()) {
+        final file = File(resolvedPath);
+        if (!await file.exists()) {
           AudioLog.log(
             '[SoLoud] loadAudio: FILE NOT FOUND id=$id at $resolvedPath',
           );
           return;
         }
-        source = await _soloud!.loadFile(resolvedPath);
+
+        // Si no requiere acceso aleatorio (reverse/cue), evaluamos duración para streaming desde disco
+        if (!needsRandomAccess) {
+          estimatedDuration =
+              await AudioDurationEstimator.estimateDecodedDuration(file);
+          final thresholdSec = DeviceTierDetector.profile.diskThresholdSeconds;
+          if (estimatedDuration != null &&
+              estimatedDuration.inSeconds > thresholdSec) {
+            mode = LoadMode.disk;
+          }
+        }
+
+        AudioLog.log(
+          '[SoLoud] loadAudio: LOADING id=$id mode=$mode dur=${estimatedDuration?.inSeconds}s (threshold=${DeviceTierDetector.profile.diskThresholdSeconds}s)',
+        );
+        source = await _soloud!.loadFile(resolvedPath, mode: mode);
       } else {
         source = await _soloud!.loadAsset(resolvedPath);
+        mode = LoadMode.memory;
       }
+
+      final estimatedBytes =
+          AudioDurationEstimator.estimateSoundMemoryBytes(estimatedDuration, mode);
+      _sourceBytesExpando[source] = estimatedBytes;
+
+      _loadedModes[id] = mode;
       _loadedSounds.put(id, source);
       _loadedPaths[id] = resolvedPath;
       _activeHandles[id] = [];
       AudioLog.log(
-        '[SoLoud] loadAudio: SUCCESS id=$id cacheSize=${_loadedSounds.length}',
+        '[SoLoud] loadAudio: SUCCESS id=$id mode=$mode bytes=$estimatedBytes cacheSize=${_loadedSounds.length} totalWeight=${_loadedSounds.totalWeight}',
       );
     } catch (e) {
       debugPrint('[SoLoud] loadAudio: ERROR id=$id: $e');
@@ -738,8 +830,8 @@ class SoLoudAudioEngine implements AudioEnginePort {
   }
 
   @override
-  Future<void> preloadAll(Map<String, String> idToPath) async {
-    _preloadScheduler.replaceQueue(idToPath);
+  Future<void> preloadAll(dynamic requests) async {
+    _preloadScheduler.replaceQueue(requests);
   }
 
   @override
@@ -1240,7 +1332,9 @@ class SoLoudAudioEngine implements AudioEnginePort {
     _audioData?.dispose();
     _soundFinishedController.close();
     _loadedPaths.clear();
+    _loadedModes.clear();
     _deferredDisposeSources.clear();
+    _deferredBytes = 0;
     _mutedPads.clear();
     _soloedPads.clear();
     _padVolumes.clear();

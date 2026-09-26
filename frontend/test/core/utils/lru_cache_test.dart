@@ -171,4 +171,113 @@ void main() {
       expect(() => cache.remove('nada'), returnsNormally);
     });
   });
+
+  group('desalojo por peso (bytes)', () {
+    test('totalWeight suma el peso de los elementos insertados', () {
+      final cache = LruCache<String, String>(
+        10,
+        weigh: (s) => s.length,
+        maxWeight: 100,
+      );
+      cache.put('a', 'hello'); // 5
+      cache.put('b', 'world!'); // 6
+      expect(cache.totalWeight, 11);
+    });
+
+    test('reemplazar clave actualiza totalWeight restando el valor viejo', () {
+      final cache = LruCache<String, String>(
+        10,
+        weigh: (s) => s.length,
+        maxWeight: 100,
+      );
+      cache.put('a', 'hello'); // 5
+      expect(cache.totalWeight, 5);
+      cache.put('a', 'hi'); // 2
+      expect(cache.totalWeight, 2);
+    });
+
+    test('remove y clear descuentan peso correctamente', () {
+      final cache = LruCache<String, String>(
+        10,
+        weigh: (s) => s.length,
+        maxWeight: 100,
+      );
+      cache.put('a', 'abc'); // 3
+      cache.put('b', 'defgh'); // 5
+      expect(cache.totalWeight, 8);
+
+      cache.remove('a');
+      expect(cache.totalWeight, 5);
+
+      cache.clear();
+      expect(cache.totalWeight, 0);
+    });
+
+    test('desaloja el mas antiguo cuando supera maxWeight', () {
+      final evicted = <String, String>{};
+      final cache = LruCache<String, String>(
+        10,
+        weigh: (s) => s.length,
+        maxWeight: 10,
+        onEvict: (k, v) => evicted[k] = v,
+      );
+      cache.put('a', '12345'); // 5 bytes
+      cache.put('b', '67890'); // 5 bytes -> total 10
+      expect(cache.length, 2);
+      expect(cache.totalWeight, 10);
+
+      // Al añadir 'c' con 4 bytes, total sería 14 > 10. Desaloja 'a'
+      cache.put('c', 'abcd');
+      expect(cache.containsKey('a'), isFalse);
+      expect(cache.containsKey('b'), isTrue);
+      expect(cache.containsKey('c'), isTrue);
+      expect(evicted['a'], '12345');
+      expect(cache.totalWeight, 9); // 'b'(5) + 'c'(4)
+    });
+
+    test('un unico elemento que pesa mas que maxWeight es admitido sin bucle infinito', () {
+      final evicted = <String, String>{};
+      final cache = LruCache<String, String>(
+        10,
+        weigh: (s) => s.length,
+        maxWeight: 5,
+        onEvict: (k, v) => evicted[k] = v,
+      );
+
+      // Elemento de 20 bytes en cache con maxWeight 5
+      cache.put('monster', '12345678901234567890');
+      expect(cache.length, 1);
+      expect(cache.containsKey('monster'), isTrue);
+      expect(cache.totalWeight, 20);
+      expect(evicted.isEmpty, isTrue);
+
+      // Si entra otro elemento, el monstruo si se desaloja
+      cache.put('tiny', 'hi');
+      expect(cache.containsKey('monster'), isFalse);
+      expect(cache.containsKey('tiny'), isTrue);
+      expect(cache.length, 1);
+      expect(cache.totalWeight, 2);
+      expect(evicted['monster'], '12345678901234567890');
+    });
+
+    test('setMaxWeight reduce el limite y desaloja si es necesario', () {
+      final evicted = <String, String>{};
+      final cache = LruCache<String, String>(
+        10,
+        weigh: (s) => s.length,
+        maxWeight: 20,
+        onEvict: (k, v) => evicted[k] = v,
+      );
+      cache.put('a', '12345'); // 5
+      cache.put('b', '12345'); // 5
+      cache.put('c', '12345'); // 5 -> total 15
+
+      expect(cache.length, 3);
+      cache.setMaxWeight(8); // Debe desalojar 'a' y 'b' para quedar en <= 8
+      expect(cache.length, 1);
+      expect(cache.containsKey('c'), isTrue);
+      expect(cache.totalWeight, 5);
+      expect(evicted.keys, containsAll(<String>['a', 'b']));
+    });
+  });
 }

@@ -141,5 +141,35 @@ void main() {
 
       expect(scheduler.isIdle, isTrue);
     });
+
+    test('accepts List<AudioLoadRequest> and passes needsRandomAccess to load callback', () async {
+      final receivedRequests = <AudioLoadRequest>[];
+      final completers = <String, Completer<void>>{};
+
+      final scheduler = AudioLoadScheduler(
+        maxConcurrent: 2,
+        load: (AudioLoadRequest req) {
+          receivedRequests.add(req);
+          final c = Completer<void>();
+          completers[req.id] = c;
+          return c.future;
+        },
+      );
+
+      scheduler.replaceQueue([
+        const AudioLoadRequest(id: 'pad1', path: 'path1', needsRandomAccess: true),
+        const AudioLoadRequest(id: 'pad2', path: 'path2', needsRandomAccess: false),
+      ]);
+
+      expect(scheduler.runningCount, equals(2));
+      expect(receivedRequests.length, equals(2));
+      expect(receivedRequests[0].needsRandomAccess, isTrue);
+      expect(receivedRequests[1].needsRandomAccess, isFalse);
+
+      completers['pad1']!.complete();
+      completers['pad2']!.complete();
+      await Future<void>.delayed(Duration.zero);
+      expect(scheduler.isIdle, isTrue);
+    });
   });
 }

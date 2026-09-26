@@ -59,6 +59,12 @@ class PadEntity {
   /// Conveniencia: true si el pad es una macro.
   bool get isMacro => type == PadType.macro;
 
+  /// True si el pad requiere acceso aleatorio (reproducción invertida o puntos
+  /// de inicio/bucle personalizados), lo que impide usar streaming de disco
+  /// ([LoadMode.disk]) y obliga a cargar la fuente en memoria ([LoadMode.memory]).
+  bool get needsRandomAccess =>
+      reverse || startPoint > Duration.zero || loopPoint > Duration.zero;
+
   factory PadEntity.empty(int index) {
     return PadEntity(id: 'pad_$index', index: index, label: 'PAD ${index + 1}');
   }

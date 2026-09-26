@@ -8,6 +8,7 @@ import '../../domain/entities/pad_entity.dart';
 import '../../../../core/providers/core_providers.dart';
 import '../../../../core/audio/trigger_mode.dart';
 import '../../../../core/audio/pad_trigger_resolver.dart';
+import '../../../../core/audio/audio_load_request.dart';
 import '../../../../core/services/filesystem_sync_service.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../data/models/pad_model.dart';
@@ -212,10 +213,15 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
 
     // Precargar audios en segundo plano a través de la cola con concurrencia controlada.
     // Solo los que aún no están cargados: evita recargar todo en cada rebuild.
-    final toLoad = {
+    final toLoad = [
       for (final pad in entities)
-        if (pad.sampleId != null && !audioEngine.isLoaded(pad.id)) pad.id: pad.sampleId!,
-    };
+        if (pad.sampleId != null && !audioEngine.isLoaded(pad.id))
+          AudioLoadRequest(
+            id: pad.id,
+            path: pad.sampleId!,
+            needsRandomAccess: pad.needsRandomAccess,
+          ),
+    ];
     if (toLoad.isNotEmpty) unawaited(audioEngine.preloadAll(toLoad));
 
     return entities;
@@ -362,6 +368,18 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       if (loopPointMs != null) model.loopPointMs = loopPointMs;
       await isar.padModels.put(model);
     });
+
+    final needsRandomAccess = (model.reverse == true) ||
+        (model.startPointMs != null && model.startPointMs! > 0) ||
+        (model.loopPointMs != null && model.loopPointMs! > 0);
+    if (needsRandomAccess && model.samplePath != null && model.samplePath!.isNotEmpty) {
+      final audioEngine = ref.read(audioEngineProvider);
+      unawaited(audioEngine.loadAudio(
+        '$padId',
+        model.samplePath!,
+        needsRandomAccess: true,
+      ));
+    }
 
     final current = state.value ?? [];
     state = AsyncData([
