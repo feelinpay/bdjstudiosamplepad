@@ -39,7 +39,9 @@ class AudioLoadScheduler {
   @visibleForTesting
   bool get isIdle => _running == 0 && _pending.isEmpty && _idlePending.isEmpty;
 
-  Future<void> replaceQueue(dynamic queue) {
+  /// Descarta lo pendiente (primario e idle) y encola [queue]. El Future se
+  /// completa cuando la cola primaria se vacía o cuando otra llamada la reemplaza.
+  Future<void> replaceQueue(Iterable<AudioLoadRequest> queue) {
     _pending.clear();
     _idlePending.clear();
     if (_primaryCompleter != null && !_primaryCompleter!.isCompleted) {
@@ -47,16 +49,8 @@ class AudioLoadScheduler {
     }
     _primaryCompleter = Completer<void>();
 
-    if (queue is Map<String, String>) {
-      for (final entry in queue.entries) {
-        _pending[entry.key] = AudioLoadRequest(id: entry.key, path: entry.value);
-      }
-    } else if (queue is Iterable<AudioLoadRequest>) {
-      for (final req in queue) {
-        _pending[req.id] = req;
-      }
-    } else if (queue is Map<String, AudioLoadRequest>) {
-      _pending.addAll(queue);
+    for (final req in queue) {
+      _pending[req.id] = req;
     }
 
     if (_pending.isEmpty && _running == 0) {
@@ -68,24 +62,12 @@ class AudioLoadScheduler {
     return _primaryCompleter!.future;
   }
 
-  void enqueueIdle(dynamic queue) {
-    if (queue is Iterable<AudioLoadRequest>) {
-      for (final req in queue) {
-        if (!_pending.containsKey(req.id) && !_idlePending.containsKey(req.id)) {
-          _idlePending[req.id] = req;
-        }
-      }
-    } else if (queue is Map<String, AudioLoadRequest>) {
-      for (final entry in queue.entries) {
-        if (!_pending.containsKey(entry.key) && !_idlePending.containsKey(entry.key)) {
-          _idlePending[entry.key] = entry.value;
-        }
-      }
-    } else if (queue is Map<String, String>) {
-      for (final entry in queue.entries) {
-        if (!_pending.containsKey(entry.key) && !_idlePending.containsKey(entry.key)) {
-          _idlePending[entry.key] = AudioLoadRequest(id: entry.key, path: entry.value);
-        }
+  /// Encola [queue] en baja prioridad, ignorando ids ya presentes en cualquiera
+  /// de las dos colas.
+  void enqueueIdle(Iterable<AudioLoadRequest> queue) {
+    for (final req in queue) {
+      if (!_pending.containsKey(req.id) && !_idlePending.containsKey(req.id)) {
+        _idlePending[req.id] = req;
       }
     }
     _pump();
@@ -110,20 +92,7 @@ class AudioLoadScheduler {
   void _pump() {
     while (_running < maxConcurrent && _pending.isNotEmpty) {
       final id = _pending.keys.first;
-      final request = _pending.remove(id)!;
-      _running++;
-      try {
-        _load(request).catchError((Object error, StackTrace stack) {
-          debugPrint('[AudioLoadScheduler] Error al precargar audio ($id, ${request.path}): $error');
-        }).whenComplete(() {
-          _running--;
-          _checkPrimaryCompletion();
-          _pump();
-        });
-      } catch (_) {
-        _running--;
-        _checkPrimaryCompletion();
-      }
+      _dispatch(_pending.remove(id)!, idle: false);
     }
 
     _checkPrimaryCompletion();
@@ -135,18 +104,23 @@ class AudioLoadScheduler {
         return;
       }
       final id = _idlePending.keys.first;
-      final request = _idlePending.remove(id)!;
-      _running++;
-      try {
-        _load(request).catchError((Object error, StackTrace stack) {
-          debugPrint('[AudioLoadScheduler] Error al precargar audio ocioso ($id, ${request.path}): $error');
-        }).whenComplete(() {
-          _running--;
-          _pump();
-        });
-      } catch (_) {
-        _running--;
-      }
+      _dispatch(_idlePending.remove(id)!, idle: true);
     }
+  }
+
+  /// Lanza una carga. `_load` envuelve la función del motor en `Future.sync`,
+  /// así que un error síncrono llega como Future fallido: nunca lanza aquí ni
+  /// se ejecuta dos veces.
+  void _dispatch(AudioLoadRequest request, {required bool idle}) {
+    _running++;
+    _load(request).catchError((Object error, StackTrace stack) {
+      debugPrint(
+        '[AudioLoadScheduler] Error al precargar audio${idle ? ' ocioso' : ''} '
+        '(${request.id}, ${request.path}): $error',
+      );
+    }).whenComplete(() {
+      _running--;
+      _pump();
+    });
   }
 }

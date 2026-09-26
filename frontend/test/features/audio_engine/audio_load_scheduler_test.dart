@@ -2,6 +2,10 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:bdj_studio_sample_pad/features/audio_engine/data/audio_load_scheduler.dart';
 
+List<AudioLoadRequest> _reqs(Map<String, String> idToPath) => [
+      for (final e in idToPath.entries) AudioLoadRequest(id: e.key, path: e.value),
+    ];
+
 void main() {
   group('AudioLoadScheduler', () {
     test('never runs more than maxConcurrent at the same time', () async {
@@ -17,12 +21,12 @@ void main() {
         },
       );
 
-      scheduler.replaceQueue({
+      scheduler.replaceQueue(_reqs({
         'pad1': 'path1',
         'pad2': 'path2',
         'pad3': 'path3',
         'pad4': 'path4',
-      });
+      }));
 
       expect(scheduler.runningCount, equals(2));
       expect(scheduler.pendingCount, equals(2));
@@ -68,21 +72,21 @@ void main() {
       );
 
       // Page 1 loads pads A, B, C, D
-      scheduler.replaceQueue({
+      scheduler.replaceQueue(_reqs({
         'A': 'pathA',
         'B': 'pathB',
         'C': 'pathC',
         'D': 'pathD',
-      });
+      }));
 
       expect(loadedIds, equals(['A', 'B']));
       expect(scheduler.pendingCount, equals(2)); // C and D pending
 
       // User immediately switches to Page 2 (pads E, F)
-      scheduler.replaceQueue({
+      scheduler.replaceQueue(_reqs({
         'E': 'pathE',
         'F': 'pathF',
-      });
+      }));
 
       expect(scheduler.pendingCount, equals(2)); // E and F now pending, C and D discarded
       expect(loadedIds, equals(['A', 'B']));
@@ -122,10 +126,10 @@ void main() {
         },
       );
 
-      scheduler.replaceQueue({
+      scheduler.replaceQueue(_reqs({
         'errPad': 'pathErr',
         'okPad': 'pathOk',
-      });
+      }));
 
       expect(loadedIds, equals(['errPad']));
 
