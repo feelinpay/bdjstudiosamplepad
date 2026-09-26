@@ -8,8 +8,3 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
-    # Copia vendorizada de isar_flutter_libs 3.1.0, ya sin uso tras migrar a
-    # isar_community. Se excluye para que su pubspec anidado (que declara la
-    # dependencia `isar`, ya inexistente) no rompa `flutter analyze`.
-    # El directorio se puede borrar del repositorio.
-    - third_party/isar_flutter_libs/**

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:isar_community/isar.dart';
+import '../../helpers/isar_test_helper.dart';
 import 'package:path/path.dart' as p;
 
 import '../../helpers/path_provider_test_helper.dart';
@@ -16,55 +17,6 @@ import 'package:bdj_studio_sample_pad/features/sample_library/data/models/folder
 import 'package:bdj_studio_sample_pad/features/sample_library/data/models/genre_model.dart';
 import 'package:bdj_studio_sample_pad/features/sample_library/data/models/sample_model.dart';
 
-/// Consistencia del formato `app_local://<workspace>/<...>/<archivo>`.
-///
-/// Ese string es la única forma que tiene un pad de encontrar su audio. Se
-/// genera en dos sitios distintos (al importar un archivo suelto y al importar
-/// una carpeta completa) y se consume en un tercero (la migración al renombrar
-/// un workspace). Si los tres no coinciden en el separador, el pad queda mudo.
-String? _isarNativeLibPath() {
-  final configFile = File(p.join('.dart_tool', 'package_config.json'));
-  if (!configFile.existsSync()) return null;
-  final configDir = configFile.parent;
-  final dynamic decoded;
-  try {
-    decoded = jsonDecode(configFile.readAsStringSync());
-  } catch (_) {
-    return null;
-  }
-  if (decoded is! Map<String, dynamic>) return null;
-  final packages = decoded['packages'];
-  if (packages is! List) return null;
-  for (final entry in packages) {
-    if (entry is! Map<String, dynamic>) continue;
-    if (entry['name'] != 'isar_community_flutter_libs') continue;
-    final rootUri = entry['rootUri'];
-    if (rootUri is! String) continue;
-    final uri = Uri.parse(rootUri);
-    final pkgDir = uri.isAbsolute
-        ? Directory.fromUri(uri)
-        : Directory(p.join(configDir.path, rootUri));
-    // isar_community renombro la libreria nativa de Windows: `isar.dll` en el
-    // paquete original, `libisar.dll` desde isar_community 3.2. Se prueban los
-    // nombres conocidos y se devuelve el primero que exista, porque acertar mal
-    // aqui falla en silencio: quien llama descarta la ruta inexistente, Isar cae
-    // a su nombre por defecto relativo al directorio de trabajo y el sintoma es
-    // un `error code 126` que no dice nada sobre la causa real.
-    final candidates = <String>[
-      if (Platform.isWindows) ...[
-        p.join(pkgDir.path, 'windows', 'libisar.dll'),
-        p.join(pkgDir.path, 'windows', 'isar.dll'),
-      ],
-      if (Platform.isMacOS) p.join(pkgDir.path, 'macos', 'libisar.dylib'),
-      if (Platform.isLinux) p.join(pkgDir.path, 'linux', 'libisar.so'),
-    ];
-    for (final candidate in candidates) {
-      if (File(candidate).existsSync()) return candidate;
-    }
-    return null;
-  }
-  return null;
-}
 
 Future<Isar> _openIsar(Directory tempRoot) {
   final dbDir = Directory(p.join(tempRoot.path, 'db'))
@@ -88,10 +40,7 @@ void main() {
   late Directory tempRoot;
 
   setUpAll(() async {
-    final libPath = _isarNativeLibPath();
-    if (libPath != null && File(libPath).existsSync()) {
-      await Isar.initializeIsarCore(libraries: {Abi.current(): libPath});
-    }
+    await ensureTestIsarInitialized();
   });
 
   setUp(() async {
