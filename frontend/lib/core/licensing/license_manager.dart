@@ -205,7 +205,7 @@ class LicenseManager implements LicensingPort {
           lastCheck != null &&
           now.isBefore(lastCheck.subtract(const Duration(minutes: 5)))) {
         return const Left(
-          LicenseFailure('La fecha y hora del sistema retrocedió de forma anormal. Ajusta tu reloj a la hora real.'),
+          ClockFailure('La fecha y hora del sistema retrocedió de forma anormal. Ajusta tu reloj a la hora y fecha real de hoy e inténtalo de nuevo.'),
         );
       }
 
@@ -219,10 +219,15 @@ class LicenseManager implements LicensingPort {
         deviceId: fingerprint,
       );
 
-      await _secureStorage.storeSecure(
-        LicenseStorageKeys.lastLicenseCheckUtc,
-        now.toIso8601String(),
-      );
+      // Si el reloj salta más de 48h hacia adelante de forma anómala (ej. BIOS agotada o fecha errónea en el futuro),
+      // no escribimos lastLicenseCheckUtc en esa pasada para evitar que al corregir la hora la licencia quede bloqueada.
+      final isAnomalousFutureJump = lastCheck != null && now.isAfter(lastCheck.add(const Duration(hours: 48)));
+      if (!isAnomalousFutureJump) {
+        await _secureStorage.storeSecure(
+          LicenseStorageKeys.lastLicenseCheckUtc,
+          now.toIso8601String(),
+        );
+      }
 
       _currentStatus = LicenseStatus.active;
       return Right(

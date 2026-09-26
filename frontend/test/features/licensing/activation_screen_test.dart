@@ -17,7 +17,7 @@ class FakeLicenseNotifier extends StateNotifier<LicenseState> implements License
   Future<void> deactivate() async {}
 
   @override
-  Future<void> sync() async {}
+  Future<void> sync({bool force = false}) async {}
 
   @override
   Future<String?> updateLicense(String licenseKey) async => null;

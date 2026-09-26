@@ -24,6 +24,10 @@ class LicenseFailure extends Failure {
   const LicenseFailure(super.message, {super.code, super.stackTrace});
 }
 
+class ClockFailure extends LicenseFailure {
+  const ClockFailure(super.message, {super.code, super.stackTrace});
+}
+
 class DeviceFailure extends Failure {
   const DeviceFailure(super.message, {super.code, super.stackTrace});
 }

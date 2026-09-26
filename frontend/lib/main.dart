@@ -508,7 +508,7 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
 
     DeviceFingerprint.onFingerprintChanged = () {
       if (mounted) {
-        ref.read(licenseProvider.notifier).sync();
+        ref.read(licenseProvider.notifier).sync(force: true);
       }
     };
 
@@ -665,6 +665,52 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
                   Text(
                     licenseState.error ??
                         'La verificación de licencia tardó demasiado tiempo.',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  FilledButton.icon(
+                    onPressed: () => ref.read(licenseProvider.notifier).retry(),
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Reintentar'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      case LicenseLoadingState.clockError:
+        return Scaffold(
+          backgroundColor: const Color(0xFF151522),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(28.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.access_time_filled_rounded,
+                    color: Colors.orangeAccent,
+                    size: 56,
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Hora del sistema desincronizada',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 19,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    licenseState.error ??
+                        'La fecha y hora del sistema no coincide con el registro seguro de licencia. '
+                        'Ajusta tu reloj a la hora y fecha real de hoy e inténtalo de nuevo.',
                     style: const TextStyle(
                       color: Colors.white70,
                       fontSize: 13,

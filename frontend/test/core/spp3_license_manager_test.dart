@@ -276,6 +276,79 @@ void main() {
       expect(securityPort.writtenKeys, contains(LicenseStorageKeys.lastSyncAt));
       expect(securityPort.writtenKeys, contains(LicenseStorageKeys.lastLicenseCheckUtc));
     });
+
+    test('9. Deteccion de retroceso de reloj retorna ClockFailure solo para licencias con caducidad', () async {
+      final hwidHash = KeyHierarchy.hashHwid('1111-2222-3333-4444');
+      final payload = Spp3Payload(
+        licenseId: 'LIC-CLOCK-9001',
+        customerId: 'CLIENT-CLOCK',
+        deviceId: '1111-2222-3333-4444',
+        hwidHash: hwidHash,
+        productCode: 'bdj_studio_sample_pad',
+        exactVersion: '1.0.3',
+        plan: 'pro',
+        issuedAtUtc: DateTime.now().toUtc(),
+        expiresAtUtc: DateTime.now().toUtc().add(const Duration(days: 30)),
+      );
+
+      final token = await Spp3Token.issue(
+        payload: payload,
+        signerCertificate: adminCert,
+        operatorKeyPair: operatorKeyPair,
+      );
+
+      final actResult = await licenseManager.activateLicense(token);
+      expect(actResult.isRight(), isTrue);
+
+      // Simulamos que el reloj retrocedió colocando lastLicenseCheckUtc 1 hora en el futuro
+      securityPort.storage[LicenseStorageKeys.lastLicenseCheckUtc] =
+          DateTime.now().toUtc().add(const Duration(hours: 1)).toIso8601String();
+
+      final valResult = await licenseManager.validateLicense();
+      expect(valResult.isLeft(), isTrue);
+      valResult.fold(
+        (failure) {
+          expect(failure, isA<ClockFailure>());
+          expect(failure.message, contains('retrocedió de forma anormal'));
+        },
+        (_) => fail('Deberia haber fallado por retroceso de reloj'),
+      );
+    });
+
+    test('10. Salto anomalo hacia el futuro (>48h) no escribe lastLicenseCheckUtc para no envenenar la clave', () async {
+      final hwidHash = KeyHierarchy.hashHwid('1111-2222-3333-4444');
+      final payload = Spp3Payload(
+        licenseId: 'LIC-FUTURE-1001',
+        customerId: 'CLIENT-FUTURE',
+        deviceId: '1111-2222-3333-4444',
+        hwidHash: hwidHash,
+        productCode: 'bdj_studio_sample_pad',
+        exactVersion: '1.0.3',
+        plan: 'pro',
+        issuedAtUtc: DateTime.now().toUtc(),
+        expiresAtUtc: DateTime.now().toUtc().add(const Duration(days: 365)),
+      );
+
+      final token = await Spp3Token.issue(
+        payload: payload,
+        signerCertificate: adminCert,
+        operatorKeyPair: operatorKeyPair,
+      );
+
+      await licenseManager.activateLicense(token);
+
+      // Colocamos un lastCheck conocido hace 3 días (72h en el pasado respecto a now)
+      final pastCheck = DateTime.now().toUtc().subtract(const Duration(hours: 72));
+      securityPort.storage[LicenseStorageKeys.lastLicenseCheckUtc] = pastCheck.toIso8601String();
+      securityPort.writtenKeys.clear();
+
+      // Al validar ahora (now está a +72h respecto a pastCheck, > 48h de salto):
+      final valResult = await licenseManager.validateLicense();
+      expect(valResult.isRight(), isTrue);
+      // NO debe haberse sobrescrito lastLicenseCheckUtc con el valor lejano
+      expect(securityPort.writtenKeys, isNot(contains(LicenseStorageKeys.lastLicenseCheckUtc)));
+      expect(securityPort.storage[LicenseStorageKeys.lastLicenseCheckUtc], equals(pastCheck.toIso8601String()));
+    });
   });
 }
 

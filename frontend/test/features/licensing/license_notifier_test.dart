@@ -202,7 +202,7 @@ void main() {
     expect(notifier.state.error, contains('No hay una licencia activa'));
   });
 
-  test('LicenseNotifier sync detecta retroceso de reloj del sistema', () async {
+  test('LicenseNotifier sync con force: true revalida aunque pasaran menos de 30 minutos', () async {
     final completer = Completer<Result<LicenseInfo>>();
     final notifier = LicenseNotifier(manager, preloaded: completer.future);
 
@@ -218,12 +218,34 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(notifier.state.loadingState, LicenseLoadingState.licensed);
 
-    // Simulamos que lastCheck está 1 hora en el futuro (reloj retrocedido)
+    // Simulamos que la última verificación fue hace 5 minutos
     fakeStorage.data[LicenseStorageKeys.lastLicenseCheckUtc] =
-        DateTime.now().toUtc().add(const Duration(hours: 1)).toIso8601String();
+        DateTime.now().toUtc().subtract(const Duration(minutes: 5)).toIso8601String();
 
+    // Sin force: no revalida
     await notifier.sync();
+    expect(notifier.state.loadingState, LicenseLoadingState.licensed);
+
+    // Con force: true: revalida de inmediato (pasa a unlicensed por storage vacío)
+    await notifier.sync(force: true);
     expect(notifier.state.loadingState, LicenseLoadingState.unlicensed);
-    expect(notifier.state.error, contains('retrocedió de forma anormal'));
   });
+
+  test('LicenseNotifier pasa a clockError ante ClockFailure sin degradar a unlicensed', () async {
+    final clockManager = _MockClockFailureManager();
+    final clockNotifier = LicenseNotifier(clockManager);
+    await Future<void>.delayed(Duration.zero);
+    expect(clockNotifier.state.loadingState, LicenseLoadingState.clockError);
+    expect(clockNotifier.state.error, contains('reloj'));
+  });
+}
+
+class _MockClockFailureManager extends LicenseManager {
+  _MockClockFailureManager()
+      : super(secureStorage: _FakeSecurityPort(), fingerprint: _FakeFingerprint());
+
+  @override
+  Future<Result<LicenseInfo>> validateLicense() async {
+    return const Left(ClockFailure('La fecha y hora del sistema retrocedió de forma anormal. Ajusta tu reloj a la hora y fecha real de hoy e inténtalo de nuevo.'));
+  }
 }

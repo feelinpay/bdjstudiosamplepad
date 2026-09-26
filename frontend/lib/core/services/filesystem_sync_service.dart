@@ -597,7 +597,7 @@ class FilesystemSyncService {
         if (_suspendCount > 0) return;
 
         _debounceTimer?.cancel();
-        _debounceTimer = Timer(debounce, () {
+        _debounceTimer = Zone.root.run(() => Timer(debounce, () {
           Zone.root.run(() async {
             if (_suspendCount > 0 || _isSyncing) return;
             if (_pendingAffectedDirs.isEmpty) return;
@@ -611,7 +611,7 @@ class FilesystemSyncService {
               onChangesDetected();
             }
           });
-        });
+        }));
       });
     } catch (e) {
       debugPrint('No se pudo iniciar el watcher en vivo: $e');

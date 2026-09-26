@@ -29,10 +29,12 @@ final librarySyncProvider = FutureProvider<int>((ref) async {
     await IsarWorkspaceRepository(Future.value(isar))
         .reconcileAllPageIndexIntegrity();
   } finally {
-    FilesystemSyncService.startLiveWatcher(
-      isar,
-      onChangesDetected: () => refreshLibraryViews(ref),
-    );
+    Zone.root.run(() {
+      FilesystemSyncService.startLiveWatcher(
+        isar,
+        onChangesDetected: () => refreshLibraryViews(ref),
+      );
+    });
   }
   return changed;
 });

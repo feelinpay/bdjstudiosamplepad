@@ -24,7 +24,7 @@ final licenseManagerProvider = Provider<LicenseManager>((ref) {
   );
 });
 
-enum LicenseLoadingState { initial, loading, licensed, unlicensed, error, timeout }
+enum LicenseLoadingState { initial, loading, licensed, unlicensed, error, timeout, clockError }
 
 class LicenseState {
   final LicenseLoadingState loadingState;
@@ -91,10 +91,15 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
   void _applyValidationResult(Result<LicenseInfo> result) {
     result.fold(
       (failure) {
+        final isClock = failure is ClockFailure ||
+            failure.message.contains('retrocedió de forma anormal') ||
+            failure.message.toLowerCase().contains('reloj');
         state = state.copyWith(
-          loadingState: LicenseLoadingState.unlicensed,
+          loadingState: isClock
+              ? LicenseLoadingState.clockError
+              : LicenseLoadingState.unlicensed,
           status: _manager.currentStatus,
-          error: _manager.currentStatus == LicenseStatus.none
+          error: _manager.currentStatus == LicenseStatus.none && !isClock
               ? null
               : failure.message,
         );
@@ -214,18 +219,11 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
     );
   }
 
-  Future<void> sync() async {
-    final lastCheck = await _manager.getLastLicenseCheckUtc();
-    final now = DateTime.now().toUtc();
-    if (lastCheck != null) {
-      if (now.isBefore(lastCheck.subtract(const Duration(minutes: 5)))) {
-        state = state.copyWith(
-          loadingState: LicenseLoadingState.unlicensed,
-          error: 'La fecha y hora del sistema retrocedió de forma anormal. Ajusta tu reloj a la hora real.',
-        );
-        return;
-      }
-      if (now.difference(lastCheck) < const Duration(minutes: 30)) {
+  Future<void> sync({bool force = false}) async {
+    if (!force) {
+      final lastCheck = await _manager.getLastLicenseCheckUtc();
+      final now = DateTime.now().toUtc();
+      if (lastCheck != null && now.difference(lastCheck) < const Duration(minutes: 30)) {
         return;
       }
     }
@@ -235,8 +233,13 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
       final result = await _manager.syncLicense().timeout(_checkBudget);
       result.fold(
         (failure) {
+          final isClock = failure is ClockFailure ||
+              failure.message.contains('retrocedió de forma anormal') ||
+              failure.message.toLowerCase().contains('reloj');
           state = state.copyWith(
-            loadingState: LicenseLoadingState.unlicensed,
+            loadingState: isClock
+                ? LicenseLoadingState.clockError
+                : LicenseLoadingState.unlicensed,
             error: failure.message,
           );
         },
