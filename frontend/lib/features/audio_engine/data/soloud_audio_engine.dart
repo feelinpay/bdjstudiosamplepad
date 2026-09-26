@@ -309,12 +309,9 @@ class SoLoudAudioEngine implements AudioEnginePort {
             ? lastError
             : Exception(lastError?.toString() ?? 'audio init failed');
       }
-      // Visualization is resource-intensive. On low-end devices it stays OFF
-      // by default and is enabled lazily when the user opens the visualizer.
-      // On mid/high devices the behaviour is preserved.
-      _soloud!.setVisualizationEnabled(
-        DeviceTierDetector.enableVisualizationByDefault,
-      );
+      // Visualización bajo demanda (T20): solo se activa si hay consumidores registrados
+      // (ej. el MasterMixerPanel está abierto durante un reinicio/cambio de dispositivo).
+      _soloud!.setVisualizationEnabled(_visualizationRefs > 0);
       _isInitialized = true;
       _engineState = AudioEngineState.ready;
       debugPrint(
@@ -1280,6 +1277,30 @@ class SoLoudAudioEngine implements AudioEnginePort {
   }
 
   @override
+  int _visualizationRefs = 0;
+
+  @visibleForTesting
+  int get visualizationRefs => _visualizationRefs;
+
+  @override
+  void acquireVisualization() {
+    _visualizationRefs++;
+    if (_visualizationRefs == 1) {
+      setVisualizationEnabled(true);
+    }
+  }
+
+  @override
+  void releaseVisualization() {
+    if (_visualizationRefs > 0) {
+      _visualizationRefs--;
+      if (_visualizationRefs == 0) {
+        setVisualizationEnabled(false);
+      }
+    }
+  }
+
+  @override
   void setVisualizationEnabled(bool enabled) {
     if (_audioDisabled || _soloud == null) return;
     try {
@@ -1291,7 +1312,9 @@ class SoLoudAudioEngine implements AudioEnginePort {
 
   @override
   Float32List? getAudioWave() {
-    if (!_isInitialized || _audioDisabled || _soloud == null) return null;
+    if (!_isInitialized || _audioDisabled || _soloud == null || _visualizationRefs == 0) {
+      return null;
+    }
     try {
       _audioData ??= AudioData(GetSamplesKind.wave);
       _audioData!.updateSamples();
@@ -1338,6 +1361,8 @@ class SoLoudAudioEngine implements AudioEnginePort {
     _activeHandles.clear();
     _chokeGroupHandles.clear();
     _audioData?.dispose();
+    _audioData = null;
+    _visualizationRefs = 0;
     _soundFinishedController.close();
     _loadedPaths.clear();
     _loadedModes.clear();

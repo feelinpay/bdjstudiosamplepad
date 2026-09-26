@@ -320,6 +320,22 @@ class MockAudioEngine implements AudioEnginePort {
     masterDistortion = amount;
   }
 
+  int visualizationRefs = 0;
+
+  @override
+  void acquireVisualization() {
+    visualizationRefs++;
+    if (visualizationRefs == 1) setVisualizationEnabled(true);
+  }
+
+  @override
+  void releaseVisualization() {
+    if (visualizationRefs > 0) {
+      visualizationRefs--;
+      if (visualizationRefs == 0) setVisualizationEnabled(false);
+    }
+  }
+
   @override
   void setVisualizationEnabled(bool enabled) {}
 

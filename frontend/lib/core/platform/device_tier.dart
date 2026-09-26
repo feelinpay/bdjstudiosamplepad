@@ -103,9 +103,6 @@ class DeviceTierDetector {
   /// Interval at which the audio engine polls voice handles (ms).
   static int get audioPollingIntervalMs => profile.voicePollingIntervalMs;
 
-  /// Whether real-time audio visualization should be enabled by default.
-  static bool get enableVisualizationByDefault => profile.enableVisualization;
-
   /// Whether pad rendering should use simplified effects (flat colors, no
   /// heavy box shadows) because the GPU cannot reliably render gradients
   /// through ANGLE. True on legacy GPUs (Intel HD 3000, etc.) and on

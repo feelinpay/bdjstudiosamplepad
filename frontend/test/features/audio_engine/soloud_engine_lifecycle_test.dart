@@ -170,4 +170,44 @@ void main() {
       );
     });
   });
+
+  group('visualización bajo demanda (T20)', () {
+    test('contador: acquire x2 -> release x1 -> sigue activa; release x2 -> inactiva; extra release no baja de 0', () async {
+      await engine.initialize();
+      expect(engine.visualizationRefs, equals(0));
+      expect(engine.getAudioWave(), isNull);
+
+      engine.acquireVisualization();
+      expect(engine.visualizationRefs, equals(1));
+
+      engine.acquireVisualization();
+      expect(engine.visualizationRefs, equals(2));
+
+      engine.releaseVisualization();
+      expect(engine.visualizationRefs, equals(1));
+
+      engine.releaseVisualization();
+      expect(engine.visualizationRefs, equals(0));
+      expect(engine.getAudioWave(), isNull);
+
+      // Release de más no baja de cero
+      engine.releaseVisualization();
+      expect(engine.visualizationRefs, equals(0));
+    });
+
+    test('reinicialización del motor con refs > 0 mantiene y reaplica la visualización', () async {
+      await engine.initialize();
+      engine.acquireVisualization();
+      expect(engine.visualizationRefs, equals(1));
+
+      // Reinicializar motor (ej. reintento o cambio de dispositivo con panel abierto)
+      await engine.initialize();
+      expect(engine.visualizationRefs, equals(1));
+    });
+
+    test('getAudioWave devuelve null sin error mientras la visualización está desactivada', () async {
+      await engine.initialize();
+      expect(engine.getAudioWave(), isNull);
+    });
+  });
 }

@@ -98,9 +98,16 @@ abstract class AudioEnginePort {
   void setMasterFlanger(double amount);
   void setMasterDistortion(double amount);
 
+  /// Registra un consumidor de visualización de audio (ej. MasterMixerPanel).
+  /// Enciende la captura nativa de forma de onda al pasar de 0 a 1 consumidores activos.
+  void acquireVisualization();
+
+  /// Libera un consumidor de visualización de audio.
+  /// Apaga la captura nativa de forma de onda al llegar a 0 consumidores activos para ahorrar CPU.
+  void releaseVisualization();
+
   /// Activa o desactiva la captura de datos de audio en tiempo real para
-  /// visualización. Desactivada por defecto en dispositivos de baja gama
-  /// para ahorrar CPU; los widgets de visualizador la activan bajo demanda.
+  /// visualización de forma directa.
   void setVisualizationEnabled(bool enabled);
 
   Float32List? getAudioWave();

@@ -67,7 +67,6 @@ class DeviceProfile {
   final int cacheBudgetMb;
   final int maxConcurrentLoads;
   final int diskThresholdSeconds;
-  final bool enableVisualization;
   final bool reducedVisualEffects;
   final int voicePollingIntervalMs;
   final String summary;
@@ -78,7 +77,6 @@ class DeviceProfile {
     required this.cacheBudgetMb,
     required this.maxConcurrentLoads,
     required this.diskThresholdSeconds,
-    required this.enableVisualization,
     required this.reducedVisualEffects,
     required this.voicePollingIntervalMs,
     required this.summary,
@@ -167,8 +165,6 @@ DeviceProfile resolveProfile(DeviceSignals s, PerformanceOverride o) {
     DeviceTier.high => 180,
   };
 
-  const bool enableVisualization = false; // Bajo demanda en todos
-
   final bool reducedVisualEffects =
       effectiveTier == DeviceTier.low || s.legacyGpu;
 
@@ -189,7 +185,6 @@ DeviceProfile resolveProfile(DeviceSignals s, PerformanceOverride o) {
     cacheBudgetMb: budgetMb,
     maxConcurrentLoads: maxConcurrentLoads,
     diskThresholdSeconds: diskThresholdSeconds,
-    enableVisualization: enableVisualization,
     reducedVisualEffects: reducedVisualEffects,
     voicePollingIntervalMs: voicePollingIntervalMs,
     summary: summary,

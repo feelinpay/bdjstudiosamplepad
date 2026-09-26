@@ -34,6 +34,7 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
   @override
   void initState() {
     super.initState();
+    ref.read(audioEngineProvider).acquireVisualization();
     _ticker = createTicker(_onTick);
     _ticker.start();
     _loadMixerSettings();
@@ -153,6 +154,7 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
 
   @override
   void dispose() {
+    ref.read(audioEngineProvider).releaseVisualization();
     _ticker.dispose();
     super.dispose();
   }
