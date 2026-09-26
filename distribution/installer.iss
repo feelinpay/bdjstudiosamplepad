@@ -26,6 +26,7 @@ WizardSmallImageFile=setup_assets\wizard_small.bmp
 UninstallDisplayIcon={app}\{#MyAppExeName}
 WizardStyle=modern
 PrivilegesRequired=admin
+UsedUserAreasWarning=no
 OutputDir=.
 OutputBaseFilename=BDJ_Studio_Sample_Pad_Setup_{#MyAppVersion}
 Compression=lzma2/max
