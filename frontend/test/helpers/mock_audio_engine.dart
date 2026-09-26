@@ -263,33 +263,59 @@ class MockAudioEngine implements AudioEnginePort {
   @override
   void setPadSolo(String id, bool soloed) {}
 
+  double masterReverb = 0.0;
+  double masterDelay = 0.0;
+  double masterCompressor = 0.0;
+  double masterLimiter = 0.0;
+  double masterFlanger = 0.0;
+  double masterDistortion = 0.0;
+  double eqLow = 0.0;
+  double eqMid = 0.0;
+  double eqHigh = 0.0;
+
   @override
   void setGlobalVolume(double volume) => globalVolume = volume;
 
   @override
-  void setMasterReverb(double amount) {}
+  void setMasterReverb(double amount) {
+    masterReverb = amount;
+  }
 
   @override
   void setMasterEQ({
     double lowGain = 0.0,
     double midGain = 0.0,
     double highGain = 0.0,
-  }) {}
+  }) {
+    eqLow = lowGain;
+    eqMid = midGain;
+    eqHigh = highGain;
+  }
 
   @override
-  void setMasterDelay(double amount) {}
+  void setMasterDelay(double amount) {
+    masterDelay = amount;
+  }
 
   @override
-  void setMasterCompressor(double amount) {}
+  void setMasterCompressor(double amount) {
+    masterCompressor = amount;
+  }
 
   @override
-  void setMasterLimiter(double amount) {}
+  void setMasterLimiter(double amount) {
+    masterLimiter = amount;
+  }
 
   @override
-  void setMasterFlanger(double amount) {}
+  void setMasterFlanger(double amount) {
+    masterFlanger = amount;
+  }
 
   @override
-  void setMasterDistortion(double amount) {}
+  void setMasterDistortion(double amount) {
+    masterDistortion = amount;
+  }
 
   @override
   void setVisualizationEnabled(bool enabled) {}

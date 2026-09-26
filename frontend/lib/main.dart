@@ -21,7 +21,9 @@ import 'features/pad_system/presentation/pages/main_pad_page.dart';
 import 'features/licensing/presentation/screens/activation_screen.dart';
 import 'features/licensing/presentation/providers/license_providers.dart';
 import 'features/settings/data/services/settings_service.dart';
+import 'features/settings/data/services/mixer_settings_service.dart';
 import 'features/settings/data/services/config_backup_service.dart';
+import 'core/providers/ui_providers.dart';
 import 'features/settings/presentation/providers/settings_provider.dart';
 import 'features/desktop/data/key_binding_service.dart';
 import 'features/desktop/presentation/providers/desktop_providers.dart';
@@ -57,6 +59,7 @@ void main() {
 /// Servicios ya inicializados que se inyectan en los providers.
 class _AppServices {
   final SettingsService settings;
+  final MixerSettingsService mixerSettings;
   final SoLoudAudioEngine audio;
   final KeyBindingService keyBindings;
   final SecureStorageImpl secureStorage;
@@ -65,6 +68,7 @@ class _AppServices {
 
   const _AppServices({
     required this.settings,
+    required this.mixerSettings,
     required this.audio,
     required this.keyBindings,
     required this.secureStorage,
@@ -272,6 +276,7 @@ class _BootstrapAppState extends State<_BootstrapApp> {
     _updateStatus('¡Listo!');
     return _AppServices(
       settings: settingsService,
+      mixerSettings: MixerSettingsService(prefs),
       audio: audioEngine,
       keyBindings: KeyBindingService(prefs),
       secureStorage: secureStorage,
@@ -320,6 +325,7 @@ class _BootstrapAppState extends State<_BootstrapApp> {
           overrides: [
             audioEngineProvider.overrideWithValue(services.audio),
             settingsServiceProvider.overrideWithValue(services.settings),
+            mixerSettingsServiceProvider.overrideWithValue(services.mixerSettings),
             settingsProvider.overrideWith(
               (ref) => SettingsNotifier(services.settings),
             ),
@@ -510,7 +516,17 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
       StartupTimeline.mark('firstAppFrame');
       final engine = ref.read(audioEngineProvider);
       final saved = ref.read(settingsServiceProvider).audioOutputDeviceId;
-      AudioBootstrapper.start(engine, saved).then((result) {
+      final mixer = ref.read(mixerSettingsServiceProvider);
+      AudioBootstrapper.start(
+        engine,
+        saved,
+        mixerSettingsService: mixer,
+        onMasterVolumeLoaded: (vol) {
+          if (mounted) {
+            ref.read(masterVolumeProvider.notifier).state = vol;
+          }
+        },
+      ).then((result) {
         if (mounted) {
           ref.read(audioInitializationCacheProvider.notifier).state = result;
         }

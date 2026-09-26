@@ -2,7 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../../../settings/data/services/mixer_settings_service.dart';
 import '../../../../core/providers/core_providers.dart';
 import '../../../../core/providers/ui_providers.dart';
 import '../../../midi/presentation/providers/midi_providers.dart';
@@ -36,26 +36,26 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
     super.initState();
     _ticker = createTicker(_onTick);
     _ticker.start();
-    _loadSavedMixerSettings();
+    _loadMixerSettings();
   }
 
-  Future<void> _loadSavedMixerSettings() async {
-    var prefs = await SharedPreferences.getInstance();
-    var savedVolume = prefs.getDouble('mixer_masterVolume') ?? 1.0;
-    ref.read(masterVolumeProvider.notifier).state = savedVolume;
+  void _loadMixerSettings() {
+    final service = ref.read(mixerSettingsServiceProvider);
+    final settings = service.load();
+    ref.read(masterVolumeProvider.notifier).state = settings.masterVolume;
     setState(() {
-      _reverb = prefs.getDouble('mixer_reverb') ?? 0.0;
-      _delay = prefs.getDouble('mixer_delay') ?? 0.0;
-      _flanger = prefs.getDouble('mixer_flanger') ?? 0.0;
-      _distortion = prefs.getDouble('mixer_distortion') ?? 0.0;
-      _limiter = prefs.getDouble('mixer_limiter') ?? 0.0;
-      _eqLow = prefs.getDouble('mixer_eqLow') ?? 0.0;
-      _eqMid = prefs.getDouble('mixer_eqMid') ?? 0.0;
-      _eqHigh = prefs.getDouble('mixer_eqHigh') ?? 0.0;
+      _reverb = settings.reverb;
+      _delay = settings.delay;
+      _flanger = settings.flanger;
+      _distortion = settings.distortion;
+      _limiter = settings.limiter;
+      _eqLow = settings.eqLow;
+      _eqMid = settings.eqMid;
+      _eqHigh = settings.eqHigh;
     });
 
-    var engine = ref.read(audioEngineProvider);
-    engine.setGlobalVolume(ref.read(masterVolumeProvider));
+    final engine = ref.read(audioEngineProvider);
+    engine.setGlobalVolume(settings.masterVolume);
     engine.setMasterReverb(_reverb);
     engine.setMasterDelay(_delay);
     engine.setMasterFlanger(_flanger);
@@ -64,17 +64,22 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
     engine.setMasterEQ(lowGain: _eqLow, midGain: _eqMid, highGain: _eqHigh);
   }
 
-  Future<void> _saveMixerSettings() async {
-    var prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('mixer_masterVolume', ref.read(masterVolumeProvider));
-    await prefs.setDouble('mixer_reverb', _reverb);
-    await prefs.setDouble('mixer_delay', _delay);
-    await prefs.setDouble('mixer_flanger', _flanger);
-    await prefs.setDouble('mixer_distortion', _distortion);
-    await prefs.setDouble('mixer_limiter', _limiter);
-    await prefs.setDouble('mixer_eqLow', _eqLow);
-    await prefs.setDouble('mixer_eqMid', _eqMid);
-    await prefs.setDouble('mixer_eqHigh', _eqHigh);
+  MixerSettings _currentSettings() {
+    return MixerSettings(
+      masterVolume: ref.read(masterVolumeProvider),
+      reverb: _reverb,
+      delay: _delay,
+      flanger: _flanger,
+      distortion: _distortion,
+      limiter: _limiter,
+      eqLow: _eqLow,
+      eqMid: _eqMid,
+      eqHigh: _eqHigh,
+    );
+  }
+
+  void _persistSettings() {
+    ref.read(mixerSettingsServiceProvider).save(_currentSettings());
   }
 
   void _resetMixer() async {
@@ -97,7 +102,7 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
     engine.setMasterDistortion(0.0);
     engine.setMasterLimiter(0.0);
     engine.setMasterEQ(lowGain: 0.0, midGain: 0.0, highGain: 0.0);
-    await _saveMixerSettings();
+    await ref.read(mixerSettingsServiceProvider).save(const MixerSettings());
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -227,7 +232,7 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
                   onChanged: (val) {
                     ref.read(masterVolumeProvider.notifier).state = val;
                     ref.read(audioEngineProvider).setGlobalVolume(val);
-                    _saveMixerSettings();
+                    _persistSettings();
                   },
                 ),
                 const SizedBox(height: 16),
@@ -255,7 +260,7 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
                           midGain: _eqMid,
                           highGain: _eqHigh,
                         );
-                    _saveMixerSettings();
+                    _persistSettings();
                   },
                 ),
                 const SizedBox(height: 12),
@@ -272,7 +277,7 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
                           midGain: _eqMid,
                           highGain: _eqHigh,
                         );
-                    _saveMixerSettings();
+                    _persistSettings();
                   },
                 ),
                 const SizedBox(height: 12),
@@ -289,7 +294,7 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
                           midGain: _eqMid,
                           highGain: _eqHigh,
                         );
-                    _saveMixerSettings();
+                    _persistSettings();
                   },
                 ),
                 const SizedBox(height: 16),
@@ -314,7 +319,7 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
                   onChanged: (val) {
                     setState(() => _reverb = val);
                     ref.read(audioEngineProvider).setMasterReverb(val);
-                    _saveMixerSettings();
+                    _persistSettings();
                   },
                 ),
                 _buildKnob(
@@ -327,7 +332,7 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
                   onChanged: (val) {
                     setState(() => _delay = val);
                     ref.read(audioEngineProvider).setMasterDelay(val);
-                    _saveMixerSettings();
+                    _persistSettings();
                   },
                 ),
                 _buildKnob(
@@ -340,7 +345,7 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
                   onChanged: (val) {
                     setState(() => _flanger = val);
                     ref.read(audioEngineProvider).setMasterFlanger(val);
-                    _saveMixerSettings();
+                    _persistSettings();
                   },
                 ),
                 _buildKnob(
@@ -353,7 +358,7 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
                   onChanged: (val) {
                     setState(() => _distortion = val);
                     ref.read(audioEngineProvider).setMasterDistortion(val);
-                    _saveMixerSettings();
+                    _persistSettings();
                   },
                 ),
                 _buildKnob(
@@ -366,7 +371,7 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
                   onChanged: (val) {
                     setState(() => _limiter = val);
                     ref.read(audioEngineProvider).setMasterLimiter(val);
-                    _saveMixerSettings();
+                    _persistSettings();
                   },
                 ),
               ],
