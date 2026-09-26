@@ -184,7 +184,8 @@ class ProjectImporter {
     final mediaStagingDir = Directory(p.join(stagingDir.path, 'media'));
 
     if (await mediaStagingDir.exists()) {
-      final mediaFiles = mediaStagingDir.listSync().whereType<File>().toList();
+      final mediaFiles =
+          (await mediaStagingDir.list().toList()).whereType<File>().toList();
       final totalFiles = mediaFiles.length;
       onProgress?.call(0, totalFiles > 0 ? totalFiles : 1);
       if (mediaFiles.isNotEmpty) {

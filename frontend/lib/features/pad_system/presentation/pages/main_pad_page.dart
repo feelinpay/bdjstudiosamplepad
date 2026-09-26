@@ -688,7 +688,7 @@ class _ExplorerBody extends ConsumerWidget {
 
         if (Platform.isAndroid) {
           final treeLike = SafFolderImportService.looksLikeTreeUri(sourcePath);
-          final resolved = LocalAudioStorageService.resolveContentUriToPath(sourcePath);
+          final resolved = await LocalAudioStorageService.resolveContentUriToPath(sourcePath);
           debugPrint(
             'BDJ WS Import: uri=$sourcePath resolved=$resolved treeLike=$treeLike',
           );
@@ -715,7 +715,9 @@ class _ExplorerBody extends ConsumerWidget {
           }
 
           // Estrategia 2: importar directo de la ruta física resuelta
-          final pathToImport = candidatePath ?? (Directory(resolved).existsSync() ? resolved : null);
+          final resolvedExists = await Directory(resolved).exists();
+          if (!context.mounted) return;
+          final pathToImport = candidatePath ?? (resolvedExists ? resolved : null);
           if (pathToImport != null) {
             importedWorkspace = await BlockingProgressDialog.run(
               context,

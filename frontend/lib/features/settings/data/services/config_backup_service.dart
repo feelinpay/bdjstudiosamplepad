@@ -250,7 +250,7 @@ class ConfigBackupService {
         ExtractZipArgs(zipPath: zipFilePath, targetDir: stagingDir.path),
       );
 
-      final manifestFile = _findStagedFile(stagingDir, _manifestEntry);
+      final manifestFile = await _findStagedFile(stagingDir, _manifestEntry);
       if (manifestFile == null || !await manifestFile.exists()) {
         throw const FormatException('El respaldo no contiene un manifiesto.');
       }
@@ -841,16 +841,20 @@ class ConfigBackupService {
     return paths;
   }
 
-  static File? _findStagedFile(Directory stagingDir, String entryName) {
+  static Future<File?> _findStagedFile(
+    Directory stagingDir,
+    String entryName,
+  ) async {
     final direct = File(p.join(stagingDir.path, entryName));
-    if (direct.existsSync()) return direct;
+    if (await direct.exists()) return direct;
 
     final normalizedTarget = entryName
         .replaceAll('\\', '/')
         .replaceAll(RegExp(r'^[./\\]+'), '')
         .toLowerCase();
 
-    for (final entity in stagingDir.listSync(recursive: true)) {
+    final entities = await stagingDir.list(recursive: true).toList();
+    for (final entity in entities) {
       if (entity is! File) continue;
       final rel = p
           .relative(entity.path, from: stagingDir.path)
@@ -876,7 +880,7 @@ class ConfigBackupService {
     if (entryName.contains('..') || p.isAbsolute(entryName)) {
       throw const FormatException('Ruta insegura dentro del respaldo.');
     }
-    final source = _findStagedFile(stagingDir, entryName);
+    final source = await _findStagedFile(stagingDir, entryName);
     if (source == null || !await source.exists()) {
       throw FormatException('Falta el archivo $entryName.');
     }

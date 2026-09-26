@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/license_providers.dart';
 import '../../../../core/licensing/licensing_port.dart';
+import '../../../../core/widgets/brand_logo.dart';
 
 class ActivationScreen extends ConsumerStatefulWidget {
   const ActivationScreen({super.key});
@@ -96,26 +97,7 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.black38,
-                        border: Border.all(
-                          color: Colors.cyanAccent.withValues(alpha: 0.3),
-                        ),
-                      ),
-                      child: Image.asset(
-                        'assets/icon/logo.png',
-                        height: 64,
-                        width: 64,
-                        errorBuilder: (ctx, err, stack) => const Icon(
-                          Icons.grid_view_rounded,
-                          color: Colors.cyanAccent,
-                          size: 54,
-                        ),
-                      ),
-                    ),
+                    const BrandLogo(size: 64, radius: 18),
                     const SizedBox(height: 16),
                     const Text(
                       'BDJ STUDIO SAMPLE PAD',

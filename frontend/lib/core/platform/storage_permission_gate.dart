@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../services/saf_folder_import_service.dart';
+import '../widgets/brand_logo.dart';
 
 /// Portón OBLIGATORIO de permisos de almacenamiento (solo Android).
 ///
@@ -128,20 +129,7 @@ class _PermissionRequestScreen extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: Image.asset(
-                    'assets/icon/logo.png',
-                    width: 100,
-                    height: 100,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const Icon(
-                      Icons.library_music_rounded,
-                      color: Colors.deepPurpleAccent,
-                      size: 80,
-                    ),
-                  ),
-                ),
+                const BrandLogo(size: 100, radius: 24),
                 const SizedBox(height: 20),
                 const Text(
                   'Acceso a Audio y Samples',

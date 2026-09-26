@@ -98,14 +98,25 @@ class LocalAudioStorageService {
     var relPath = relDir.isEmpty ? fileName : p.join(relDir, fileName);
     var fullPath = p.join(baseDir.path, relPath);
 
-    var counter = 1;
-    while (File(fullPath).existsSync()) {
-      fileName = '${cleanBase}_$counter$ext';
-      relPath = relDir.isEmpty ? fileName : p.join(relDir, fileName);
-      fullPath = p.join(baseDir.path, relPath);
-      counter++;
+    var counter = 0;
+    while (true) {
+      final fileName =
+          counter == 0 ? '$cleanBase$ext' : '${cleanBase}_$counter$ext';
+      final relPath = relDir.isEmpty ? fileName : p.join(relDir, fileName);
+      final fullPath = p.join(baseDir.path, relPath);
+      final targetFile = File(fullPath);
+      if (await targetFile.exists()) {
+        counter++;
+        continue;
+      }
+      try {
+        await Directory(p.dirname(fullPath)).create(recursive: true);
+        await targetFile.create(exclusive: true);
+        return _toPosixRelative(relPath);
+      } on PathExistsException {
+        counter++;
+      }
     }
-    return _toPosixRelative(relPath);
   }
 
   /// Obtiene el directorio principal de almacenamiento en AppData / Application Support.
@@ -117,7 +128,7 @@ class LocalAudioStorageService {
       AppStorageService.waveformDirectory();
 
   /// Convierte URIs de Android SAF (content://...primary:Download/...) a rutas físicas (/storage/emulated/0/Download/...)
-  static String resolveContentUriToPath(String path) {
+  static Future<String> resolveContentUriToPath(String path) async {
     if (Platform.isAndroid &&
         (path.startsWith('content://') ||
             path.contains('%') ||
@@ -141,7 +152,7 @@ class LocalAudioStorageService {
           '/storage/self/primary/$rel',
         ];
         for (final c in candidates) {
-          if (File(c).existsSync() || Directory(c).existsSync()) {
+          if (await File(c).exists() || await Directory(c).exists()) {
             return c;
           }
         }
@@ -164,7 +175,7 @@ class LocalAudioStorageService {
     String originalPath, {
     String? namespace,
   }) async {
-    final resolvedOriginal = resolveContentUriToPath(originalPath);
+    final resolvedOriginal = await resolveContentUriToPath(originalPath);
     final ext = p.extension(resolvedOriginal).isEmpty
         ? '.mp3'
         : p.extension(resolvedOriginal);
@@ -386,7 +397,7 @@ class LocalAudioStorageService {
       for (final entity in entities) {
         if (entity is Directory) {
           try {
-            if (await entity.exists() && entity.listSync().isEmpty) {
+            if (await entity.exists() && await entity.list().isEmpty) {
               await entity.delete(recursive: true);
             }
           } catch (_) {}

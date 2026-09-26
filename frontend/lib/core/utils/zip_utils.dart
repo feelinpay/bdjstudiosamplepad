@@ -26,7 +26,7 @@ Future<void> zipDirectoryInIsolate(ZipHelperArgs args) async {
   encoder.create(args.outputPath);
   await encoder.addFile(File(args.metadataPath));
   var mediaDir = Directory(args.mediaDirPath);
-  if (mediaDir.listSync().isNotEmpty) await encoder.addDirectory(mediaDir);
+  if (!await mediaDir.list().isEmpty) await encoder.addDirectory(mediaDir);
   await encoder.close();
 }
 

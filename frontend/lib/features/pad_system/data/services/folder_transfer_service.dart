@@ -312,7 +312,8 @@ class FolderTransferService {
     if (await directMeta.exists()) {
       metadataFile = directMeta;
     } else {
-      for (final entity in stagingDir.listSync(recursive: true)) {
+      final entities = await stagingDir.list(recursive: true).toList();
+      for (final entity in entities) {
         if (entity is File && entity.path.endsWith('metadata.json')) {
           metadataFile = entity;
           break;

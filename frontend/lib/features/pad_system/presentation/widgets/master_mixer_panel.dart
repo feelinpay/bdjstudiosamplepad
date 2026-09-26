@@ -30,11 +30,12 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
   double _leftLevel = 0.0;
   double _rightLevel = 0.0;
   late Ticker _ticker;
+  late final AudioEnginePort _engine;
 
   @override
   void initState() {
     super.initState();
-    ref.read(audioEngineProvider).acquireVisualization();
+    _engine = ref.read(audioEngineProvider)..acquireVisualization();
     _ticker = createTicker(_onTick);
     _ticker.start();
     _loadMixerSettings();
@@ -115,8 +116,7 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
   }
 
   void _onTick(Duration elapsed) {
-    var engine = ref.read(audioEngineProvider);
-    var wave = engine.getAudioWave();
+    var wave = _engine.getAudioWave();
 
     if (wave != null && wave.length >= 2) {
       double leftPeak = 0.0;
@@ -154,7 +154,7 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
 
   @override
   void dispose() {
-    ref.read(audioEngineProvider).releaseVisualization();
+    _engine.releaseVisualization();
     _ticker.dispose();
     super.dispose();
   }

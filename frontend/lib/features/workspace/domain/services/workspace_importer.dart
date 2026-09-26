@@ -73,7 +73,7 @@ class WorkspaceImporter {
       // Copy to staging directory first
       await _copyRecursive(source, stagingDir);
 
-      final tree = _readTree(stagingDir, '');
+      final tree = await _readTree(stagingDir, '');
 
       // Build database structure (transactional)
       final workspace = await _buildDatabaseStructure(
@@ -145,16 +145,17 @@ class WorkspaceImporter {
   }
 
   /// Lee la estructura de carpetas del destino (relativo al workspace).
-  _TreeNode _readTree(Directory dir, String relDir) {
+  Future<_TreeNode> _readTree(Directory dir, String relDir) async {
     final children = <String, _TreeNode>{};
     final audioFiles = <String>[];
     try {
-      for (final entity in dir.listSync()) {
+      final entities = await dir.list().toList();
+      for (final entity in entities) {
         final name = p.basename(entity.path);
         if (name.startsWith('.')) continue;
         if (entity is Directory) {
           final childRel = relDir.isEmpty ? name : '$relDir/$name';
-          children[name] = _readTree(entity, childRel);
+          children[name] = await _readTree(entity, childRel);
         } else if (entity is File) {
           final ext = p.extension(entity.path).toLowerCase();
           if (LocalAudioStorageService.supportedAudioExtensions.contains(ext)) {
@@ -290,10 +291,10 @@ class WorkspaceImporter {
   ) async {
     var name = base.trim().isEmpty ? 'Workspace importado' : base.trim();
     var n = 2;
-    bool used(String candidate) =>
+    Future<bool> used(String candidate) async =>
         dbNames.contains(candidate) ||
-        Directory(p.join(mediaDir.path, candidate)).existsSync();
-    while (used(name)) {
+        await Directory(p.join(mediaDir.path, candidate)).exists();
+    while (await used(name)) {
       name = '$base ${n++}';
     }
     return name;

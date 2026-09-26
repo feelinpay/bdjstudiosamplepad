@@ -236,8 +236,8 @@ class DeviceFingerprint {
       String? dmiUuid;
       try {
         final dmiFile = File('/sys/class/dmi/id/product_uuid');
-        if (dmiFile.existsSync()) {
-          dmiUuid = dmiFile.readAsStringSync().trim();
+        if (await dmiFile.exists()) {
+          dmiUuid = (await dmiFile.readAsString()).trim();
         }
       } catch (_) {}
 
@@ -245,8 +245,8 @@ class DeviceFingerprint {
       if (machineId == null || machineId.isEmpty) {
         try {
           final midFile = File('/etc/machine-id');
-          if (midFile.existsSync()) {
-            machineId = midFile.readAsStringSync().trim();
+          if (await midFile.exists()) {
+            machineId = (await midFile.readAsString()).trim();
           }
         } catch (_) {}
       }

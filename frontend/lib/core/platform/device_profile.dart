@@ -231,7 +231,7 @@ class DeviceSignalsCollector {
         availRam = winMem.availMb;
       }
     } else if (Platform.isLinux || Platform.isAndroid) {
-      final meminfo = _readProcMeminfo();
+      final meminfo = await _readProcMeminfo();
       if (meminfo != null) {
         totalRam = meminfo.totalMb;
         availRam = meminfo.availMb;
@@ -245,8 +245,8 @@ class DeviceSignalsCollector {
       // Si se ejecuta en Android, intentamos leer la versión de SDK
       try {
         final versionFile = File('/system/build.prop');
-        if (versionFile.existsSync()) {
-          for (final line in versionFile.readAsLinesSync()) {
+        if (await versionFile.exists()) {
+          for (final line in await versionFile.readAsLines()) {
             if (line.startsWith('ro.build.version.sdk=')) {
               androidSdk = int.tryParse(line.split('=').last.trim());
               break;
@@ -306,13 +306,13 @@ class DeviceSignalsCollector {
     return null;
   }
 
-  static ({int totalMb, int? availMb})? _readProcMeminfo() {
+  static Future<({int totalMb, int? availMb})?> _readProcMeminfo() async {
     try {
       final file = File('/proc/meminfo');
-      if (!file.existsSync()) return null;
+      if (!await file.exists()) return null;
       int? totalKb;
       int? availKb;
-      for (final line in file.readAsLinesSync()) {
+      for (final line in await file.readAsLines()) {
         if (line.startsWith('MemTotal:')) {
           totalKb = int.tryParse(line.substring('MemTotal:'.length).trim().split(RegExp(r'\s+')).first);
         } else if (line.startsWith('MemAvailable:')) {

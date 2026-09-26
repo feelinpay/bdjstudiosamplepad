@@ -15,6 +15,7 @@ import 'core/services/filesystem_sync_service.dart';
 import 'core/services/app_storage_service.dart';
 import 'core/platform/device_tier.dart';
 import 'core/platform/storage_permission_gate.dart';
+import 'core/widgets/brand_logo.dart';
 import 'features/audio_engine/data/soloud_audio_engine.dart';
 import 'core/theme/app_theme.dart';
 import 'features/pad_system/presentation/pages/main_pad_page.dart';
@@ -364,20 +365,7 @@ class _StartupScreen extends StatelessWidget {
               ? Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(22),
-                      child: Image.asset(
-                        'assets/icon/logo.png',
-                        width: 104,
-                        height: 104,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => const Icon(
-                          Icons.library_music_rounded,
-                          color: Colors.deepPurpleAccent,
-                          size: 80,
-                        ),
-                      ),
-                    ),
+                    const BrandLogo(),
                     const SizedBox(height: 20),
                     const Text(
                       'BDJ STUDIO',
@@ -501,9 +489,12 @@ class SamplePadProApp extends ConsumerStatefulWidget {
 
 class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
     with WidgetsBindingObserver {
+  late final AudioEnginePort _engine;
+
   @override
   void initState() {
     super.initState();
+    _engine = ref.read(audioEngineProvider);
     WidgetsBinding.instance.addObserver(this);
 
     DeviceFingerprint.onFingerprintChanged = () {
@@ -514,7 +505,7 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       StartupTimeline.mark('firstAppFrame');
-      final engine = ref.read(audioEngineProvider);
+      final engine = _engine;
       final saved = ref.read(settingsServiceProvider).audioOutputDeviceId;
       final mixer = ref.read(mixerSettingsServiceProvider);
       AudioBootstrapper.start(
@@ -560,7 +551,7 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
   void dispose() {
     DeviceFingerprint.onFingerprintChanged = null;
     WidgetsBinding.instance.removeObserver(this);
-    ref.read(audioEngineProvider).dispose();
+    _engine.dispose();
     FilesystemSyncService.stopLiveWatcher();
     super.dispose();
   }

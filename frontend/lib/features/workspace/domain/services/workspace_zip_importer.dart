@@ -124,7 +124,8 @@ class WorkspaceZipImporter {
 
       final mediaStagingDir = Directory(p.join(stagingDir.path, 'media'));
       if (await mediaStagingDir.exists()) {
-        final entries = mediaStagingDir.listSync().whereType<File>().toList();
+        final entries =
+            (await mediaStagingDir.list().toList()).whereType<File>().toList();
         final totalFiles = entries.length;
         var copiedFiles = 0;
         onProgress?.call(0, totalFiles > 0 ? totalFiles : 1);

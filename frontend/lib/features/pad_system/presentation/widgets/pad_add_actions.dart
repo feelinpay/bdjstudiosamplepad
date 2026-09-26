@@ -680,7 +680,8 @@ class PadAddActions {
     }
 
     Future<AudioFolderNode?> scanDirect(String physicalPath) async {
-      if (!Directory(physicalPath).existsSync()) return null;
+      if (!await Directory(physicalPath).exists()) return null;
+      if (!context.mounted) return null;
       _showScanningDialog(context);
       try {
         return await _scanAudioFolderTreeAsync(Directory(physicalPath));
@@ -722,7 +723,7 @@ class PadAddActions {
       if (pickedPath == null || pickedPath.isEmpty || !context.mounted) return;
 
       final treeLike = SafFolderImportService.looksLikeTreeUri(pickedPath);
-      final resolved = LocalAudioStorageService.resolveContentUriToPath(
+      final resolved = await LocalAudioStorageService.resolveContentUriToPath(
         pickedPath,
       );
       debugPrint(
@@ -749,7 +750,8 @@ class PadAddActions {
         rootNode = await copyViaSaf(pickedPath);
         if ((rootNode?.totalAudioCount ?? 0) == 0 &&
             resolved != pickedPath &&
-            Directory(resolved).existsSync()) {
+            await Directory(resolved).exists()) {
+          if (!context.mounted) return;
           // SAF no encontró nada; por si el dispositivo permite File I/O.
           rootNode = await scanDirect(resolved);
         }
@@ -1031,7 +1033,7 @@ class PadAddActions {
 /// Escaneo asíncrono de carpetas (usa dir.list() en vez de listSync para no
 /// bloquear el hilo de UI).
 Future<AudioFolderNode> _scanAudioFolderTreeAsync(Directory rawDir) async {
-  final resolvedPath = LocalAudioStorageService.resolveContentUriToPath(
+  final resolvedPath = await LocalAudioStorageService.resolveContentUriToPath(
     rawDir.path,
   );
   final dir = Directory(resolvedPath);
@@ -1051,21 +1053,20 @@ Future<AudioFolderNode> _scanAudioFolderTreeAsync(Directory rawDir) async {
   var audioFiles = <File>[];
   var subfolders = <AudioFolderNode>[];
 
-  // Recopilar TODAS las entradas primero, con tolerancia a errores: si una
-  // subcarpeta no se puede listar (permisos/SAF), no se pierde el resto del
-  // árbol. El fallback listSync evita que un error a mitad del stream deje
-  // el contenido incompleto.
+  // Recopilar entradas de forma asíncrona tolerante a fallos: handleError evita
+  // que un error individual en permisos o enlace simbólico aborte el resto del árbol.
   var entities = <FileSystemEntity>[];
   try {
-    await for (final entity in dir.list(recursive: false, followLinks: false)) {
+    await for (final entity in dir
+        .list(recursive: false, followLinks: false)
+        .handleError((e) {
+      debugPrint('Error listando elemento en ${dir.path}: $e');
+    })) {
       entities.add(entity);
       await Future<void>.delayed(Duration.zero);
     }
   } catch (e) {
-    debugPrint('Error listando ${dir.path}: $e → fallback listSync');
-    try {
-      entities = dir.listSync(recursive: false, followLinks: false);
-    } catch (_) {}
+    debugPrint('Error listando ${dir.path}: $e');
   }
 
   for (final entity in entities) {
