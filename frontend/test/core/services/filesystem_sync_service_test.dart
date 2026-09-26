@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
@@ -590,6 +591,68 @@ void main() {
 
       expect(result['deleted'], 3);
       expect(result['remaining'], 2);
+    },
+  );
+
+  test(
+    'startLiveWatcher lanzado dentro del candado no hereda la exclusión en su timer de debounce',
+    () async {
+      final mediaDir = await _expectedMediaDir();
+      final wsDir = Directory(p.join(mediaDir.path, 'Watcher Set'));
+      await wsDir.create(recursive: true);
+
+      final isar = await _openIsar(tempRoot);
+      addTearDown(() {
+        FilesystemSyncService.stopLiveWatcher();
+        isar.close();
+      });
+
+      final syncStarted = Completer<void>();
+      final blocker = Completer<void>();
+      var syncExecutedWhileLocked = false;
+      var blockerActive = false;
+
+      // 1. Iniciar el vigilante desde dentro de un LibraryWriteLock.run(...)
+      await LibraryWriteLock.run(() async {
+        FilesystemSyncService.startLiveWatcher(
+          isar,
+          debounce: const Duration(milliseconds: 50),
+          onChangesDetected: () {
+            if (blockerActive) {
+              syncExecutedWhileLocked = true;
+            }
+            if (!syncStarted.isCompleted) {
+              syncStarted.complete();
+            }
+          },
+        );
+      });
+
+      // 2. Ocupar el candado con una operación bloqueante
+      blockerActive = true;
+      final blockerFuture = LibraryWriteLock.run(() async {
+        await blocker.future;
+      });
+
+      // 3. Provocar un evento en el directorio vigilado
+      final file = File(p.join(wsDir.path, 'sample_live.wav'));
+      await file.writeAsBytes([1, 2, 3]);
+
+      // 4. Esperar un tiempo superior al debounce del vigilante
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+
+      // 5. El vigilante no debió haber ejecutado la reconciliación mientras el candado estaba ocupado
+      expect(syncStarted.isCompleted, isFalse);
+      expect(syncExecutedWhileLocked, isFalse);
+
+      // 6. Liberar el candado
+      blockerActive = false;
+      blocker.complete();
+      await blockerFuture;
+
+      // 7. Ahora la reconciliación debe poder adquirir el candado y completarse
+      await syncStarted.future.timeout(const Duration(seconds: 3));
+      expect(syncExecutedWhileLocked, isFalse);
     },
   );
 }

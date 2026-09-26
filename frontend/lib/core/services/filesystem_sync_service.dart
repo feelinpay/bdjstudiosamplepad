@@ -526,12 +526,14 @@ class FilesystemSyncService {
         }
 
         _debounceTimer?.cancel();
-        _debounceTimer = Timer(debounce, () async {
-          if (_isSyncing) return;
-          final newCount = await reconcileOnStartup(isar);
-          if (newCount > 0 && onChangesDetected != null) {
-            onChangesDetected();
-          }
+        _debounceTimer = Timer(debounce, () {
+          Zone.root.run(() async {
+            if (_isSyncing) return;
+            final newCount = await reconcileOnStartup(isar);
+            if (newCount > 0 && onChangesDetected != null) {
+              onChangesDetected();
+            }
+          });
         });
       });
     } catch (e) {
