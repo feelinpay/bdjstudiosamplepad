@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../core/services/app_storage_service.dart';
+import '../../../../core/services/filesystem_sync_service.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/library_write_lock.dart';
@@ -67,8 +68,11 @@ class ProjectImporter {
     void Function(int current, int total)? onProgress,
   }) =>
       LibraryWriteLock.run(() async {
+    FilesystemSyncService.suspend();
+    Isar? isar;
     final file = File(filePath);
     if (!await file.exists()) {
+      await FilesystemSyncService.resume();
       return const ProjectImportResult(
         success: false,
         message: 'El archivo de respaldo no existe o no se puede acceder a él.',
@@ -82,6 +86,8 @@ class ProjectImporter {
     Directory? createdMediaDir;
 
     try {
+      isar = await dbFuture;
+
       // 1. Descomprimir en isolate directamente a disco (sin cargar todo en memoria)
       await compute(
         extractZipInIsolate,
@@ -134,6 +140,7 @@ class ProjectImporter {
           await work.delete(recursive: true);
         } catch (_) {}
       }
+      await FilesystemSyncService.resume(isar);
     }
   });
 

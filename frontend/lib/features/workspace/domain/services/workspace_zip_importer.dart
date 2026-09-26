@@ -5,6 +5,7 @@ import 'package:isar_community/isar.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../../core/services/app_storage_service.dart';
+import '../../../../core/services/filesystem_sync_service.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/library_write_lock.dart';
@@ -34,8 +35,11 @@ class WorkspaceZipImporter {
     void Function(int current, int total)? onProgress,
   }) =>
       LibraryWriteLock.run(() async {
+    FilesystemSyncService.suspend();
+    Isar? isarInstance;
     final file = File(filePath);
     if (!await file.exists()) {
+      await FilesystemSyncService.resume();
       debugPrint('[WorkspaceZipImporter] El archivo no existe: $filePath');
       return null;
     }
@@ -47,6 +51,8 @@ class WorkspaceZipImporter {
     Directory? createdWorkspaceDir;
 
     try {
+      final isar = await dbFuture;
+      isarInstance = isar;
       // 1. Descomprimir en isolate directamente a disco (sin cargar en RAM)
       await compute(
         extractZipInIsolate,
@@ -91,8 +97,6 @@ class WorkspaceZipImporter {
         debugPrint('[WorkspaceZipImporter] Nombre de workspace inválido');
         return null;
       }
-
-      final isar = await dbFuture;
 
       // 3. Nombre único de workspace
       final existingNames = (await isar.workspaceModels.where().findAll())
@@ -243,6 +247,7 @@ class WorkspaceZipImporter {
           await work.delete(recursive: true);
         } catch (_) {}
       }
+      await FilesystemSyncService.resume(isarInstance);
     }
   });
 }

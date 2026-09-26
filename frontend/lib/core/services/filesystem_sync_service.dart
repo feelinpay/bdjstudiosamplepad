@@ -20,6 +20,126 @@ class FilesystemSyncService {
   static StreamSubscription<FileSystemEvent>? _watcherSubscription;
   static Timer? _debounceTimer;
   static bool _isSyncing = false;
+  static int _suspendCount = 0;
+  static final Set<String> _pendingAffectedDirs = {};
+
+  /// Indica si el watcher está actualmente suspendido.
+  static bool get isSuspended => _suspendCount > 0;
+
+  /// Suspende temporalmente el procesamiento de eventos del watcher.
+  /// Contador anidable: cada llamada a [suspend] debe tener su correspondiente [resume].
+  static void suspend() {
+    _suspendCount++;
+  }
+
+  /// Reanuda el procesamiento de eventos del watcher. Al llegar a 0 el contador,
+  /// reconcilia únicamente los directorios de workspace acumulados durante la suspensión.
+  static Future<int> resume([
+    Isar? isar,
+    VoidCallback? onChangesDetected,
+  ]) async {
+    if (_suspendCount > 0) {
+      _suspendCount--;
+    }
+    if (_suspendCount == 0 && _pendingAffectedDirs.isNotEmpty && isar != null) {
+      final dirsToSync = Set<String>.from(_pendingAffectedDirs);
+      _pendingAffectedDirs.clear();
+      int totalNew = 0;
+      for (final dir in dirsToSync) {
+        totalNew += await reconcileWorkspaceDir(isar, dir);
+      }
+      if (totalNew > 0 && onChangesDetected != null) {
+        onChangesDetected();
+      }
+      return totalNew;
+    }
+    return 0;
+  }
+
+  /// Reconcilia únicamente el Workspace especificado por [dirName] (directorio de primer nivel).
+  static Future<int> reconcileWorkspaceDir(Isar isar, String dirName) =>
+      LibraryWriteLock.run(() => _reconcileWorkspaceDirInternal(isar, dirName));
+
+  static Future<int> _reconcileWorkspaceDirInternal(
+    Isar isar,
+    String dirName,
+  ) async {
+    final cleanName = dirName.trim();
+    if (cleanName.isEmpty || cleanName.startsWith('.')) return 0;
+    if (LocalAudioStorageService.isInternalMediaDirName(cleanName)) return 0;
+
+    final mediaDir = await AppStorageService.mediaDirectory();
+    final wsDir = Directory(p.join(mediaDir.path, cleanName));
+
+    int newItemsCount = 0;
+    if (await wsDir.exists()) {
+      WorkspaceModel? workspace = await isar.workspaceModels
+          .filter()
+          .nameEqualTo(cleanName, caseSensitive: false)
+          .findFirst();
+
+      if (workspace == null) {
+        workspace = WorkspaceModel()
+          ..name = cleanName
+          ..createdAt = DateTime.now()
+          ..isLocked = false;
+
+        await isar.writeTxn(() async {
+          await isar.workspaceModels.put(workspace!);
+          final rootPage = PageModel()
+            ..pageIndex = 0
+            ..name = 'Página 1'
+            ..columns = 4
+            ..rows = 4
+            ..workspace.value = workspace;
+          await isar.pageModels.put(rootPage);
+          await rootPage.workspace.save();
+        });
+        newItemsCount++;
+      }
+
+      try {
+        newItemsCount += await _syncFolderRecursive(
+          isar,
+          workspace,
+          wsDir,
+          0,
+          {wsDir.path},
+        );
+      } catch (e) {
+        debugPrint('FilesystemSync: no se pudo sincronizar "$cleanName": $e');
+      }
+    } else {
+      // La carpeta de este workspace ya no existe en disco.
+      final workspace = await isar.workspaceModels
+          .filter()
+          .nameEqualTo(cleanName, caseSensitive: false)
+          .findFirst();
+      if (workspace != null) {
+        final hasContent = await _workspaceHasAudioPads(isar, workspace);
+        if (hasContent) {
+          debugPrint(
+            'FilesystemSync: carpeta de "${workspace.name}" ausente en disco pero '
+            'el workspace tiene contenido; se conserva en BD.',
+          );
+        } else {
+          await isar.writeTxn(() async {
+            await workspace.pages.load();
+            for (final page in workspace.pages.toList()) {
+              await page.pads.load();
+              await isar.padModels.deleteAll(
+                page.pads.map((pd) => pd.id).toList(),
+              );
+              await isar.pageModels.delete(page.id);
+            }
+            await isar.workspaceModels.delete(workspace.id);
+          });
+          newItemsCount++;
+        }
+      }
+    }
+    return newItemsCount;
+  }
 
   /// Fase 1: Reconciliación al arrancar.
   /// Escanea la carpeta raíz de medios en el disco duro y registra en tiempo real
@@ -38,10 +158,8 @@ class FilesystemSyncService {
       int newItemsCount = 0;
       final topLevelEntities = await mediaDir.list().toList();
       final workspaces = await isar.workspaceModels.where().findAll();
-      final wsMap = <String, WorkspaceModel>{
-        for (final w in workspaces) w.name.trim().toLowerCase(): w,
-      };
 
+      final diskDirNames = <String>{};
       for (final entity in topLevelEntities) {
         if (entity is Directory) {
           final dirName = p.basename(entity.path).trim();
@@ -49,65 +167,12 @@ class FilesystemSyncService {
           if (LocalAudioStorageService.isInternalMediaDirName(dirName)) {
             continue;
           }
-
-          WorkspaceModel? workspace = wsMap[dirName.toLowerCase()];
-          if (workspace == null) {
-            // Se encontró un Workspace nuevo creado desde el explorador de Windows
-            workspace = WorkspaceModel()
-              ..name = dirName
-              ..createdAt = DateTime.now()
-              ..isLocked = false;
-
-            await isar.writeTxn(() async {
-              await isar.workspaceModels.put(workspace!);
-              final rootPage = PageModel()
-                ..pageIndex = 0
-                ..name = 'Página 1'
-                ..columns = 4
-                ..rows = 4
-                ..workspace.value = workspace;
-              await isar.pageModels.put(rootPage);
-              await rootPage.workspace.save();
-            });
-
-            newItemsCount++;
-            wsMap[dirName.toLowerCase()] = workspace;
-          }
-
-          try {
-            newItemsCount += await _syncFolderRecursive(
-              isar,
-              workspace,
-              entity,
-              0,
-              {entity.path},
-            );
-          } catch (e) {
-            // Un workspace no debe abortar toda la reconciliación: su carpeta
-            // puede estar temporalmente inaccesible (disco extraíble, sync de
-            // nube en pausa). Se registra el error y se continúa con el resto.
-            debugPrint(
-              'FilesystemSync: no se pudo sincronizar "$dirName": $e',
-            );
-          }
+          diskDirNames.add(dirName.toLowerCase());
+          newItemsCount += await _reconcileWorkspaceDirInternal(isar, dirName);
         }
       }
 
-      // Limpieza de workspaces huérfanos: si el usuario borró la carpeta desde
-      // el explorador de archivos, eliminar el workspace de la base de datos.
-      // POR SEGURIDAD solo se eliminan workspaces VACÍOS (sin pads con audio):
-      // si la carpeta falta pero el workspace tiene contenido, no debe borrarse
-      // su estructura en BD, porque la ausencia en disco puede ser transitoria
-      // (disco extraíble, sync de nube, nombre cambiado) y borrar equivaldría a
-      // perder el trabajo del DJ.
-      final diskDirNames = topLevelEntities
-          .whereType<Directory>()
-          .map((d) => p.basename(d.path).trim().toLowerCase())
-          .where(
-            (name) => !LocalAudioStorageService.isInternalMediaDirName(name),
-          )
-          .toSet();
-
+      // Limpieza de workspaces huérfanos que no estén en disco
       for (final ws in workspaces) {
         if (diskDirNames.contains(ws.name.trim().toLowerCase())) {
           continue;
@@ -120,7 +185,6 @@ class FilesystemSyncService {
           );
           continue;
         }
-        // La carpeta de este workspace ya no existe en disco y está vacía
         await isar.writeTxn(() async {
           await ws.pages.load();
           for (final page in ws.pages.toList()) {
@@ -134,11 +198,6 @@ class FilesystemSyncService {
         });
         newItemsCount++;
       }
-
-      // Nota: la limpieza de archivos huérfanos NO se ejecuta aquí. La
-      // reconciliación solo registra/elimina entradas de la BD; borrar archivos
-      // de audio en un escaneo automático podía eliminar contenido importado
-      // (folder_imports/) o de workspaces cuyo disco estaba temporalmente ausente.
 
       return newItemsCount;
     } catch (e) {
@@ -491,7 +550,8 @@ class FilesystemSyncService {
   }
 
    /// Fase 2: Watcher en vivo con bajo consumo de recursos (solo Desktop).
-   /// Captura cambios externos en tiempo real con un debounce configurable.
+   /// Captura cambios externos en tiempo real con un debounce configurable
+   /// y reconcilia de forma incremental únicamente los workspaces afectados.
    static void startLiveWatcher(
      Isar isar, {
      VoidCallback? onChangesDetected,
@@ -515,22 +575,39 @@ class FilesystemSyncService {
             name.endsWith('.dat')) {
           return;
         }
-        // Ignorar eventos dentro de directorios internos (folder_imports/,
-        // workspace_imports/, restauraciones): su contenido no se reconcilia,
-        // así que no deben disparar escaneos ni tocar la base de datos.
-        if (p.isWithin(mediaDir.path, event.path)) {
-          final rel = p
-              .relative(event.path, from: mediaDir.path)
-              .replaceAll('\\', '/');
-          if (LocalAudioStorageService.isInternalMediaDirPath(rel)) return;
+
+        bool added = false;
+        final srcTop = _extractTopDir(event.path, mediaDir.path);
+        if (srcTop != null) {
+          _pendingAffectedDirs.add(srcTop);
+          added = true;
         }
+        if (event is FileSystemMoveEvent && event.destination != null) {
+          final destTop = _extractTopDir(event.destination!, mediaDir.path);
+          if (destTop != null) {
+            _pendingAffectedDirs.add(destTop);
+            added = true;
+          }
+        }
+
+        if (!added && _pendingAffectedDirs.isEmpty) return;
+
+        // Si está suspendido por una importación en curso, no disparamos debounce.
+        // Los directorios permanecen en _pendingAffectedDirs y se procesarán en resume().
+        if (_suspendCount > 0) return;
 
         _debounceTimer?.cancel();
         _debounceTimer = Timer(debounce, () {
           Zone.root.run(() async {
-            if (_isSyncing) return;
-            final newCount = await reconcileOnStartup(isar);
-            if (newCount > 0 && onChangesDetected != null) {
+            if (_suspendCount > 0 || _isSyncing) return;
+            if (_pendingAffectedDirs.isEmpty) return;
+            final dirsToSync = Set<String>.from(_pendingAffectedDirs);
+            _pendingAffectedDirs.clear();
+            int totalNew = 0;
+            for (final dir in dirsToSync) {
+              totalNew += await reconcileWorkspaceDir(isar, dir);
+            }
+            if (totalNew > 0 && onChangesDetected != null) {
               onChangesDetected();
             }
           });
@@ -541,11 +618,54 @@ class FilesystemSyncService {
     }
   }
 
-  /// Detiene el watcher en vivo y limpia los temporizadores de debounce.
+  static String? _extractTopDir(String eventPath, String mediaDirPath) {
+    String? candidate;
+    if (p.isWithin(mediaDirPath, eventPath)) {
+      final rel = p
+          .relative(eventPath, from: mediaDirPath)
+          .replaceAll('\\', '/');
+      if (LocalAudioStorageService.isInternalMediaDirPath(rel)) return null;
+      final segments = rel.split('/');
+      if (segments.isNotEmpty && segments.first.isNotEmpty) {
+        candidate = segments.first.trim();
+      }
+    } else {
+      final base = p.basename(eventPath).trim();
+      candidate = base;
+    }
+
+    if (candidate == null || candidate.isEmpty || candidate.startsWith('.')) {
+      return null;
+    }
+    if (candidate.endsWith('.tmp') || candidate.endsWith('.dat')) {
+      return null;
+    }
+    if (LocalAudioStorageService.isInternalMediaDirName(candidate)) {
+      return null;
+    }
+    final ext = p.extension(candidate).toLowerCase();
+    if (ext.isNotEmpty &&
+        LocalAudioStorageService.supportedAudioExtensions.contains(ext)) {
+      return null;
+    }
+    return candidate;
+  }
+
+  /// Detiene el watcher en vivo y limpia los temporizadores de debounce y colas pendientes.
   static void stopLiveWatcher() {
     _watcherSubscription?.cancel();
     _watcherSubscription = null;
     _debounceTimer?.cancel();
     _debounceTimer = null;
+    _pendingAffectedDirs.clear();
+  }
+
+  /// Restablece el estado estático del servicio para entornos de prueba.
+  @visibleForTesting
+  static void resetForTesting() {
+    stopLiveWatcher();
+    _isSyncing = false;
+    _suspendCount = 0;
+    _pendingAffectedDirs.clear();
   }
 }

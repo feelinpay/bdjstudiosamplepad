@@ -5,10 +5,12 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/pad_providers.dart';
+import '../../../../core/services/filesystem_sync_service.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../../../core/services/saf_folder_import_service.dart';
 import '../../../../core/utils/concurrency_shield.dart';
 import '../../../../core/widgets/blocking_progress_dialog.dart';
+import '../../../../core/providers/database_provider.dart';
 import '../../../workspace/presentation/providers/workspace_providers.dart';
 import '../../../workspace/data/models/workspace_model.dart';
 
@@ -379,70 +381,76 @@ class PadAddActions {
       );
       if (result == null || result.files.isEmpty) return;
 
-      final paths = <String>[];
-      final names = <String>[];
-      final totalFiles = result.files.length;
+      FilesystemSyncService.suspend();
+      try {
+        final paths = <String>[];
+        final names = <String>[];
+        final totalFiles = result.files.length;
 
-      await BlockingProgressDialog.run(
-        context,
-        title: 'Importando audios...',
-        initialMessage: 'Preparando $totalFiles archivo(s)...',
-        task: (progress) async {
-          // Copiar en lotes paralelos (no 1 a 1) para que la importación de
-          // muchos archivos no tarde tanto: 4 copias concurrentes por tanda.
-          const batchSize = 4;
-          for (var start = 0; start < result.files.length; start += batchSize) {
-            final end = (start + batchSize).clamp(0, result.files.length);
-            final batch = result.files.sublist(start, end);
-            final batchResults = await Future.wait(
-              batch.map((f) async {
-                try {
-                  if (f.path != null && f.path!.isNotEmpty) {
-                    final path = await LocalAudioStorageService.importAudioFile(
-                      f.path!,
+        await BlockingProgressDialog.run(
+          context,
+          title: 'Importando audios...',
+          initialMessage: 'Preparando $totalFiles archivo(s)...',
+          task: (progress) async {
+            // Copiar en lotes paralelos (no 1 a 1) para que la importación de
+            // muchos archivos no tarde tanto: 4 copias concurrentes por tanda.
+            const batchSize = 4;
+            for (var start = 0; start < result.files.length; start += batchSize) {
+              final end = (start + batchSize).clamp(0, result.files.length);
+              final batch = result.files.sublist(start, end);
+              final batchResults = await Future.wait(
+                batch.map((f) async {
+                  try {
+                    if (f.path != null && f.path!.isNotEmpty) {
+                      final path = await LocalAudioStorageService.importAudioFile(
+                        f.path!,
+                      );
+                      return (path, f.name.replaceAll(RegExp(r'\.[^.]+$'), ''));
+                    } else if (f.bytes != null && f.bytes!.isNotEmpty) {
+                      final path = await LocalAudioStorageService.importAudioBytes(
+                        f.name,
+                        f.bytes!,
+                      );
+                      return (path, f.name.replaceAll(RegExp(r'\.[^.]+$'), ''));
+                    }
+                  } catch (error, st) {
+                    debugPrint(
+                      '[PadAddActions] Fallo al importar "${f.name}": $error\n$st',
                     );
-                    return (path, f.name.replaceAll(RegExp(r'\.[^.]+$'), ''));
-                  } else if (f.bytes != null && f.bytes!.isNotEmpty) {
-                    final path = await LocalAudioStorageService.importAudioBytes(
-                      f.name,
-                      f.bytes!,
-                    );
-                    return (path, f.name.replaceAll(RegExp(r'\.[^.]+$'), ''));
                   }
-                } catch (error, st) {
-                  debugPrint(
-                    '[PadAddActions] Fallo al importar "${f.name}": $error\n$st',
-                  );
+                  return null;
+                }),
+              );
+              for (final r in batchResults) {
+                if (r != null) {
+                  paths.add(r.$1);
+                  names.add(r.$2);
                 }
-                return null;
-              }),
-            );
-            for (final r in batchResults) {
-              if (r != null) {
-                paths.add(r.$1);
-                names.add(r.$2);
               }
+              progress.updateProgress(
+                paths.length,
+                totalFiles,
+                'Copiando audios...',
+              );
+              await Future<void>.delayed(Duration.zero);
             }
-            progress.updateProgress(
-              paths.length,
-              totalFiles,
-              'Copiando audios...',
+
+            if (paths.isEmpty) return;
+
+            progress.update(
+              message: 'Creando pads para ${paths.length} audio(s)...',
             );
-            await Future<void>.delayed(Duration.zero);
-          }
-
-          if (paths.isEmpty) return;
-
-          progress.update(
-            message: 'Creando pads para ${paths.length} audio(s)...',
-          );
-          await notifier.addPads(
-            paths.length,
-            samplePaths: paths,
-            sampleNames: names,
-          );
-        },
-      );
+            await notifier.addPads(
+              paths.length,
+              samplePaths: paths,
+              sampleNames: names,
+            );
+          },
+        );
+      } finally {
+        final isar = await ref.read(isarProvider.future);
+        await FilesystemSyncService.resume(isar);
+      }
     });
   }
 

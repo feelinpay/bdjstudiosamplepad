@@ -102,6 +102,7 @@ void main() {
   });
 
   tearDown(() async {
+    FilesystemSyncService.resetForTesting();
     tearDownPathProviderMocks();
     try {
       await tempRoot.delete(recursive: true);
@@ -653,6 +654,127 @@ void main() {
       // 7. Ahora la reconciliación debe poder adquirir el candado y completarse
       await syncStarted.future.timeout(const Duration(seconds: 3));
       expect(syncExecutedWhileLocked, isFalse);
+    },
+  );
+
+  test(
+    'reconcileWorkspaceDir reconcilia exclusivamente la carpeta indicada sin alterar otras',
+    () async {
+      final mediaDir = await _expectedMediaDir();
+
+      final dirA = Directory(p.join(mediaDir.path, 'Workspace Alpha'));
+      await dirA.create(recursive: true);
+      File(p.join(dirA.path, 'kick.wav')).writeAsBytesSync([1, 2, 3]);
+
+      final dirB = Directory(p.join(mediaDir.path, 'Workspace Beta'));
+      await dirB.create(recursive: true);
+      File(p.join(dirB.path, 'snare.wav')).writeAsBytesSync([4, 5, 6]);
+
+      final isar = await _openIsar(tempRoot);
+      addTearDown(() => isar.close());
+
+      // 1. Reconciliar solo Workspace Alpha
+      final countA = await FilesystemSyncService.reconcileWorkspaceDir(
+        isar,
+        'Workspace Alpha',
+      );
+      expect(countA, greaterThanOrEqualTo(1));
+
+      final wsA = await isar.workspaceModels
+          .filter()
+          .nameEqualTo('Workspace Alpha')
+          .findFirst();
+      expect(wsA, isNotNull);
+
+      // Workspace Beta no debe haber sido tocado ni creado aún en BD
+      final wsBBefore = await isar.workspaceModels
+          .filter()
+          .nameEqualTo('Workspace Beta')
+          .findFirst();
+      expect(wsBBefore, isNull);
+
+      // 2. Reconciliar Workspace Beta
+      final countB = await FilesystemSyncService.reconcileWorkspaceDir(
+        isar,
+        'Workspace Beta',
+      );
+      expect(countB, greaterThanOrEqualTo(1));
+
+      final wsBAfter = await isar.workspaceModels
+          .filter()
+          .nameEqualTo('Workspace Beta')
+          .findFirst();
+      expect(wsBAfter, isNotNull);
+    },
+  );
+
+  test(
+    'suspend y resume anidados respetan el contador de suspensión',
+    () async {
+      expect(FilesystemSyncService.isSuspended, isFalse);
+
+      FilesystemSyncService.suspend();
+      expect(FilesystemSyncService.isSuspended, isTrue);
+
+      FilesystemSyncService.suspend();
+      expect(FilesystemSyncService.isSuspended, isTrue);
+
+      await FilesystemSyncService.resume();
+      expect(FilesystemSyncService.isSuspended, isTrue);
+
+      await FilesystemSyncService.resume();
+      expect(FilesystemSyncService.isSuspended, isFalse);
+    },
+  );
+
+  test(
+    'suspend evita ejecución del watcher y resume procesa directorios acumulados',
+    () async {
+      final mediaDir = await _expectedMediaDir();
+      final isar = await _openIsar(tempRoot);
+      addTearDown(() {
+        FilesystemSyncService.stopLiveWatcher();
+        isar.close();
+      });
+
+      var changesDetectedCalled = false;
+      FilesystemSyncService.startLiveWatcher(
+        isar,
+        debounce: const Duration(milliseconds: 50),
+        onChangesDetected: () {
+          changesDetectedCalled = true;
+        },
+      );
+
+      // 1. Suspender el watcher antes de una importación
+      FilesystemSyncService.suspend();
+      expect(FilesystemSyncService.isSuspended, isTrue);
+
+      // 2. Crear archivos en disco mientras está suspendido
+      final importedDir = Directory(p.join(mediaDir.path, 'Imported Set'));
+      await importedDir.create(recursive: true);
+      File(p.join(importedDir.path, 'cymbal.wav')).writeAsBytesSync([7, 8, 9]);
+
+      // 3. Esperar más que el debounce para verificar que no se dispara mientras está suspendido
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+
+      final wsWhileSuspended = await isar.workspaceModels
+          .filter()
+          .nameEqualTo('Imported Set')
+          .findFirst();
+      expect(wsWhileSuspended, isNull);
+      expect(changesDetectedCalled, isFalse);
+
+      // 4. Reanudar con resume(isar): debe procesar los directorios acumulados
+      final reconciled = await FilesystemSyncService.resume(isar);
+      expect(reconciled, greaterThanOrEqualTo(1));
+      expect(FilesystemSyncService.isSuspended, isFalse);
+
+      final wsAfterResume = await isar.workspaceModels
+          .filter()
+          .nameEqualTo('Imported Set')
+          .findFirst();
+      expect(wsAfterResume, isNotNull);
     },
   );
 }

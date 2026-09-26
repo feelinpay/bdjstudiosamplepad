@@ -4,6 +4,7 @@ import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:isar_community/isar.dart';
+import '../../../../core/services/filesystem_sync_service.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../../../core/services/app_storage_service.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -244,27 +245,35 @@ class FolderTransferService {
 
   /// Selecciona un .sppfolder, copia sus audios a la app y devuelve los datos.
   static Future<ImportedFolder?> pickFolder() async {
-    var picked = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['sppfolder'],
-    );
-    if (picked == null || picked.files.single.path == null) return null;
+    FilesystemSyncService.suspend();
+    try {
+      var picked = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['sppfolder'],
+      );
+      if (picked == null || picked.files.single.path == null) return null;
 
-    // Leer y descomprimir en isolate.
-    var bytes = await File(picked.files.single.path!).readAsBytes();
-    var archive = await compute(decodeZipInIsolate, bytes);
+      // Leer y descomprimir en isolate.
+      var bytes = await File(picked.files.single.path!).readAsBytes();
+      var archive = await compute(decodeZipInIsolate, bytes);
 
-    return _processArchive(archive);
+      return await _processArchive(archive);
+    } finally {
+      await FilesystemSyncService.resume();
+    }
   }
 
   /// Lee un .sppfolder o .zip desde una ruta de archivo y devuelve los datos.
   static Future<ImportedFolder?> readFolderFile(String filePath) async {
+    FilesystemSyncService.suspend();
     try {
       var bytes = await File(filePath).readAsBytes();
       var archive = await compute(decodeZipInIsolate, bytes);
       return await _processArchive(archive);
     } catch (_) {
       return null;
+    } finally {
+      await FilesystemSyncService.resume();
     }
   }
 

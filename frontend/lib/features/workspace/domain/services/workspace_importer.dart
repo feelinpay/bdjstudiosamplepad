@@ -6,6 +6,7 @@ import '../../data/models/workspace_model.dart';
 import '../../data/models/page_model.dart';
 import '../../../pad_system/data/models/pad_model.dart';
 import '../../../../core/services/app_storage_service.dart';
+import '../../../../core/services/filesystem_sync_service.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/library_write_lock.dart';
@@ -41,7 +42,9 @@ class WorkspaceImporter {
   /// Devuelve el Workspace recién importado o `null` si falla.
   Future<WorkspaceModel?> importWorkspace(String sourcePath) =>
       LibraryWriteLock.run(() async {
+    FilesystemSyncService.suspend();
     Directory? stagingDir;
+    Isar? isarInstance;
     try {
       final source = Directory(sourcePath);
       if (!await source.exists()) return null;
@@ -50,6 +53,7 @@ class WorkspaceImporter {
       if (!hasContent) return null;
 
       final isar = await dbFuture;
+      isarInstance = isar;
       final mediaDir = await AppStorageService.mediaDirectory();
 
       // Limpieza de la estructura heredada de versiones anteriores que
@@ -104,6 +108,8 @@ class WorkspaceImporter {
         }
       }
       return null;
+    } finally {
+      await FilesystemSyncService.resume(isarInstance);
     }
   });
 

@@ -8,6 +8,7 @@ import '../../domain/entities/pad_entity.dart';
 import '../../../../core/providers/core_providers.dart';
 import '../../../../core/audio/trigger_mode.dart';
 import '../../../../core/audio/pad_trigger_resolver.dart';
+import '../../../../core/services/filesystem_sync_service.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../data/models/pad_model.dart';
 import '../../data/services/folder_transfer_service.dart';
@@ -1166,39 +1167,46 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
   /// recreando la estructura completa como Carpetas de Pads tipo Explorador de Archivos.
   Future<void> importAudioDirectoryTree(AudioFolderNode rootNode) =>
       LibraryWriteLock.run(() async {
-    var isar = await ref.read(isarProvider.future);
-    var workspace = await ref.read(currentWorkspaceProvider.future);
-    if (workspace == null) return;
+    FilesystemSyncService.suspend();
+    Isar? isarInstance;
+    try {
+      final isar = await ref.read(isarProvider.future);
+      isarInstance = isar;
+      var workspace = await ref.read(currentWorkspaceProvider.future);
+      if (workspace == null) return;
 
-    var preparedRoot = await _prepareFolderNode(
-      rootNode,
-      parentNamespace: workspace.name,
-    );
-    // Reserva los indices antes de abrir la transaccion. Consultar el
-    // Workspace cacheado dentro de cada recursion devolvia siempre el mismo
-    // indice (1000), por lo que una segunda carpeta podia apuntar a una pagina
-    // equivocada o sobrescribir la navegacion de la primera.
-    var targetPage = await _pageForIndex(arg);
-    if (targetPage == null) return;
-    var nextHiddenIndex = await _nextHiddenPageIndexFromDatabase(
-      isar,
-      workspace.id,
-    );
-    int allocateHiddenIndex() => nextHiddenIndex++;
-
-    await isar.writeTxn(() async {
-      await _importPreparedNodeRecursive(
-        isar,
-        workspace,
-        preparedRoot,
-        targetPage,
-        allocateHiddenIndex,
+      var preparedRoot = await _prepareFolderNode(
+        rootNode,
+        parentNamespace: workspace.name,
       );
-    });
+      // Reserva los indices antes de abrir la transaccion. Consultar el
+      // Workspace cacheado dentro de cada recursion devolvia siempre el mismo
+      // indice (1000), por lo que una segunda carpeta podia apuntar a una pagina
+      // equivocada o sobrescribir la navegacion de la primera.
+      var targetPage = await _pageForIndex(arg);
+      if (targetPage == null) return;
+      var nextHiddenIndex = await _nextHiddenPageIndexFromDatabase(
+        isar,
+        workspace.id,
+      );
+      int allocateHiddenIndex() => nextHiddenIndex++;
 
-    // Localized refresh: only this page recomputes. Sub-pages refresh lazily
-    // when navigated into, avoiding a full workspace + all-page reload.
-    ref.invalidateSelf();
+      await isar.writeTxn(() async {
+        await _importPreparedNodeRecursive(
+          isar,
+          workspace,
+          preparedRoot,
+          targetPage,
+          allocateHiddenIndex,
+        );
+      });
+
+      // Localized refresh: only this page recomputes. Sub-pages refresh lazily
+      // when navigated into, avoiding a full workspace + all-page reload.
+      ref.invalidateSelf();
+    } finally {
+      await FilesystemSyncService.resume(isarInstance);
+    }
   });
 
   Future<void> _importPreparedNodeRecursive(
