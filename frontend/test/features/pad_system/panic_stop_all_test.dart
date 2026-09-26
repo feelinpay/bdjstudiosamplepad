@@ -33,7 +33,7 @@ void main() {
 
     // Un golpe normal: el pad se enciende.
     await notifier.onPadDown('pad_0');
-    expect(container.read(padPageProvider(0)).value!.single.state,
+    expect(container.read(padRuntimeStateProvider('pad_0')),
         PadState.playing);
 
     // Golpe con velocity y feedback MIDI activos.
@@ -45,7 +45,7 @@ void main() {
     await notifier.forceStopAll();
 
     expect(engine.stopAllCalled, isTrue);
-    expect(container.read(padPageProvider(0)).value!.single.state,
+    expect(container.read(padRuntimeStateProvider('pad_0')),
         PadState.idle);
     expect(container.read(padVelocityProvider), isEmpty);
     expect(
@@ -72,18 +72,20 @@ void main() {
     // Dos pads sonando a la vez.
     await notifier.onPadDown('pad_0');
     await notifier.onPadDown('pad_1');
-    expect(container.read(padPageProvider(0)).value!.where(
-          (p) => p.state == PadState.playing,
-        ).length,
-        2);
+    expect(container.read(padRuntimeStateProvider('pad_0')),
+        PadState.playing);
+    expect(container.read(padRuntimeStateProvider('pad_1')),
+        PadState.playing);
 
     final midi = buildMidi(container);
     midi.feedbackCalls.clear();
 
     await notifier.forceStopAll();
 
-    final after = container.read(padPageProvider(0)).value!;
-    expect(after.where((p) => p.state == PadState.playing), isEmpty);
+    expect(container.read(padRuntimeStateProvider('pad_0')),
+        PadState.idle);
+    expect(container.read(padRuntimeStateProvider('pad_1')),
+        PadState.idle);
     expect(
       midi.feedbackCalls
           .where((call) => !call.$2)
@@ -104,7 +106,7 @@ void main() {
     await notifier.forceStopAll();
 
     expect(engine.stopAllCalled, isTrue);
-    expect(container.read(padPageProvider(0)).value!.single.state,
+    expect(container.read(padRuntimeStateProvider('pad_0')),
         PadState.idle);
     // Ningún pad estaba encendido: el velocity no se toca.
     expect(container.read(padVelocityProvider), {'pad_0': 0.5});

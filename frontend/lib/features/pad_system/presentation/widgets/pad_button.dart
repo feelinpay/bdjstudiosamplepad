@@ -21,8 +21,9 @@ class PadButton extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    var isPlaying = pad.state == PadState.playing;
-    var isQueued = pad.state == PadState.queued;
+    final padState = ref.watch(padRuntimeStateProvider(pad.id));
+    var isPlaying = padState == PadState.playing;
+    var isQueued = padState == PadState.queued;
     var isHighContrast = ref.watch(
       settingsProvider.select((s) => s.highContrast),
     );

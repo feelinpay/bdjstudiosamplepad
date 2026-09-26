@@ -166,6 +166,12 @@ class SafeFolderNavigator {
   }
 }
 
+/// Estado de reproducción en tiempo real por cada pad.
+/// Desacoplado de [padPageProvider] para que los cambios de estado de un pad
+/// solo reconstruyan su propio [PadButton] y no la rejilla entera.
+final padRuntimeStateProvider =
+    StateProvider.family<PadState, String>((ref, id) => PadState.idle);
+
 /// Notifier principal que gestiona los pads de una página específica
 /// (raíz o carpeta oculta). Cada pageIndex tiene su propia instancia.
 class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
@@ -173,17 +179,9 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
 
   final int arg;
   StreamSubscription? _sub;
-  final Map<String, PadState> _runtimeStates = {};
 
   @override
   Future<List<PadEntity>> build() async {
-    final prevEntities = state.value ?? [];
-    for (final e in prevEntities) {
-      if (e.state != PadState.idle) {
-        _runtimeStates[e.id] = e.state;
-      }
-    }
-
     final workspace = await ref.watch(currentWorkspaceProvider.future);
     if (workspace == null) return [];
 
@@ -201,19 +199,9 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
 
     var entities = padModels.map(_mapToEntity).toList();
 
-    for (var e in entities) {
-      var savedState = _runtimeStates.remove(e.id);
-      if (savedState != null && savedState != PadState.idle) {
-        var idx = entities.indexOf(e);
-        entities[idx] = e.copyWith(state: savedState);
-      }
-    }
-    _runtimeStates.removeWhere((id, _) => !entities.any((e) => e.id == id));
-
     var audioEngine = ref.read(audioEngineProvider);
     _sub?.cancel();
     _sub = audioEngine.onSoundFinished.listen((padId) {
-      _runtimeStates.remove(padId);
       _setPadState(padId, PadState.idle);
     });
 
@@ -1375,15 +1363,10 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
   });
 
   void _setPadState(String id, PadState newState) {
-    if (!state.hasValue) return;
-    var currentPads = state.value!;
-    var index = currentPads.indexWhere((pad) => pad.id == id);
-    if (index != -1 && currentPads[index].state != newState) {
-      AudioLog.log('[Pad] _setPadState: id=$id ${currentPads[index].state}→$newState');
-      var updatedPad = currentPads[index].copyWith(state: newState);
-      var newStateList = [...currentPads];
-      newStateList[index] = updatedPad;
-      state = AsyncData(newStateList);
+    final current = ref.read(padRuntimeStateProvider(id));
+    if (current != newState) {
+      AudioLog.log('[Pad] _setPadState: id=$id $current→$newState');
+      ref.read(padRuntimeStateProvider(id).notifier).state = newState;
     }
   }
 
@@ -1399,7 +1382,8 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     var index = state.value!.indexWhere((pad) => pad.id == id);
     if (index != -1) {
       var pad = state.value![index];
-      AudioLog.log('[Pad] onPadDown: id=$id type=${pad.type} mode=${pad.playMode} state=${pad.state} sample=${pad.sampleId} startPoint=${pad.startPoint} endPoint=${pad.endPoint} loopPoint=${pad.loopPoint}');
+      final padState = ref.read(padRuntimeStateProvider(id));
+      AudioLog.log('[Pad] onPadDown: id=$id type=${pad.type} mode=${pad.playMode} state=$padState sample=${pad.sampleId} startPoint=${pad.startPoint} endPoint=${pad.endPoint} loopPoint=${pad.loopPoint}');
 
       // Carpeta: la navegación se maneja externamente (Navigator.push).
       // Este método NO navega; solo retorna para que el widget haga push.
@@ -1434,7 +1418,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
         return;
       }
 
-      var action = PadTriggerResolver.onDown(pad.playMode, pad.state);
+      var action = PadTriggerResolver.onDown(pad.playMode, padState);
       AudioLog.log('[Pad] onPadDown: resolver action=$action for id=$id padId=${pad.index}');
 
       if (action == PadAction.stop) {
@@ -1452,7 +1436,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
         }
 
         if (pad.playMode == TriggerMode.oneShot &&
-            pad.state == PadState.playing) {
+            padState == PadState.playing) {
           audioEngine.stop(id, notify: false);
         }
         _setPadState(id, PadState.playing);
@@ -1491,16 +1475,14 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
   /// `onSoundFinished` que también emite `stopAll()` por cada id activo).
   Future<void> forceStopAll() async {
     if (!state.hasValue) return;
-    var playing = state.value!
-        .where((pad) => pad.state != PadState.idle)
-        .toList();
     ref.read(audioEngineProvider).stopAll();
-    if (playing.isEmpty) return;
     var vels = Map<String, double>.from(ref.read(padVelocityProvider));
-    for (var pad in playing) {
-      _setPadState(pad.id, PadState.idle);
-      vels.remove(pad.id);
-      ref.read(midiControllerProvider).sendPadFeedback(pad.id, on: false);
+    for (var pad in state.value!) {
+      if (ref.read(padRuntimeStateProvider(pad.id)) != PadState.idle) {
+        _setPadState(pad.id, PadState.idle);
+        vels.remove(pad.id);
+        ref.read(midiControllerProvider).sendPadFeedback(pad.id, on: false);
+      }
     }
     ref.read(padVelocityProvider.notifier).state = vels;
   }

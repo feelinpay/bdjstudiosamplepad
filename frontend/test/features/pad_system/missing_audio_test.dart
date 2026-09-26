@@ -26,7 +26,7 @@ void main() {
 
     await notifier.onPadDown('pad_empty');
 
-    expect(container.read(padPageProvider(0)).value!.single.state,
+    expect(container.read(padRuntimeStateProvider('pad_empty')),
         PadState.idle);
     expect(engine.playCalls, isEmpty);
     expect(container.read(padVelocityProvider), isEmpty);
@@ -42,7 +42,7 @@ void main() {
     await notifier.onPadDown('pad_missing');
 
     // Regresión: antes se quedaba encendido para siempre.
-    expect(container.read(padPageProvider(0)).value!.single.state,
+    expect(container.read(padRuntimeStateProvider('pad_missing')),
         PadState.idle);
     expect(container.read(padVelocityProvider), isEmpty);
   });

@@ -26,14 +26,7 @@ ProviderContainer buildPadContainer({
       padPageProvider.overrideWithBuild((ref, notifier) async {
         final audio = ref.read(audioEngineProvider);
         final sub = audio.onSoundFinished.listen((padId) {
-          final current = notifier.state.value;
-          if (current == null) return;
-          final idx = current.indexWhere((p) => p.id == padId);
-          if (idx != -1 && current[idx].state != PadState.idle) {
-            final list = [...current];
-            list[idx] = current[idx].copyWith(state: PadState.idle);
-            notifier.state = AsyncData(list);
-          }
+          ref.read(padRuntimeStateProvider(padId).notifier).state = PadState.idle;
         });
         ref.onDispose(sub.cancel);
         return pads;
