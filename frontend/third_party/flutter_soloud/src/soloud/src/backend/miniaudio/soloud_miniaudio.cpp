@@ -532,7 +532,11 @@ namespace SoLoud
         aSoloud->postinit_internal(aSamplerate, aBuffer, aFlags, aChannels);
 
         // Use safe default values for postinit
-        miniaudio_ensure_thread_device_started();
+        result threadRes = miniaudio_ensure_thread_device_started();
+        if (threadRes != 0)
+        {
+            return threadRes;
+        }
 
 #elif defined(MA_HAS_COREAUDIO)
         // Disable CoreAudio context
@@ -677,6 +681,13 @@ namespace SoLoud
         return 0;
     }
 
+    static std::atomic<int> gLastInitResult{MA_SUCCESS};
+
+    result miniaudio_getLastInitResult()
+    {
+        return (result)gLastInitResult.load(std::memory_order_acquire);
+    }
+
     // Background thread function to initialize the audio device
     static void miniaudio_init_thread_func()
     {
@@ -685,7 +696,10 @@ namespace SoLoud
         if (!gDeviceInitDeferred)
             return;
 
-        if (ma_device_init(NULL, &gDeferredConfig.config, &gDevice) == MA_SUCCESS)
+        gLastInitResult.store(MA_SUCCESS, std::memory_order_release);
+        ma_result initRes = ma_device_init(NULL, &gDeferredConfig.config, &gDevice);
+        gLastInitResult.store((int)initRes, std::memory_order_release);
+        if (initRes == MA_SUCCESS)
         {
             gDeviceInitialized = true;
             // Start the device after initialization
@@ -693,6 +707,7 @@ namespace SoLoud
             {
                 ma_result startResult = ma_device_start(&gDevice);
                 if (startResult != MA_SUCCESS) {
+                    gLastInitResult.store((int)startResult, std::memory_order_release);
                     soloud_platform_log("miniaudio_init_thread_func: ma_device_start failed with error %d\n", startResult);
                     ma_device_uninit(&gDevice);
                     gDeviceInitialized = false;
@@ -709,7 +724,12 @@ namespace SoLoud
     result miniaudio_ensure_thread_device_started()
     {
         if (!gDeviceInitDeferred)
+        {
+            gLastInitResult.store(MA_SUCCESS, std::memory_order_release);
             return 0; // Already initialized and started
+        }
+
+        gLastInitResult.store(MA_SUCCESS, std::memory_order_release);
 
         // Create a background thread to initialize and start the device
         // This prevents the main thread's message pump from being blocked
@@ -729,7 +749,12 @@ namespace SoLoud
 
         // Verify the device is ready
         if (gDeviceInitDeferred)
+        {
+            int lastRes = gLastInitResult.load(std::memory_order_acquire);
+            if (lastRes == MA_BUSY || lastRes == MA_ALREADY_IN_USE)
+                return (result)lastRes;
             return UNKNOWN_ERROR; // Init failed
+        }
             
         return 0;
     }

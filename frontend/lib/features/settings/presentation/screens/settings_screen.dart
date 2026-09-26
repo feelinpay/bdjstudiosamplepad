@@ -407,14 +407,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final devices = await engine.listOutputDevices();
     if (!context.mounted) return;
 
-    int? selectedId;
+    int? selectedId = engine.activeDeviceId;
     final settings = ref.read(settingsServiceProvider);
-    final savedName = settings.audioOutputDeviceName;
-    if (savedName != null && savedName.isNotEmpty) {
-      final match = devices.where((d) => d.name == savedName).firstOrNull;
-      selectedId = match?.id;
+    if (selectedId == null) {
+      final savedName = settings.audioOutputDeviceName;
+      if (savedName != null && savedName.isNotEmpty) {
+        final match = devices.where((d) => d.name == savedName).firstOrNull;
+        selectedId = match?.id;
+      }
+      selectedId ??= settings.audioOutputDeviceId;
     }
-    selectedId ??= settings.audioOutputDeviceId;
 
     if (devices.isEmpty) {
       setState(() {

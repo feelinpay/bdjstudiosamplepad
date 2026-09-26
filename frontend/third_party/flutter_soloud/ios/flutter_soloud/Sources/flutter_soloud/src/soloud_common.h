@@ -3,6 +3,8 @@
 #ifndef SOLOUD_COMMON_H
 #define SOLOUD_COMMON_H
 
+char *soloudDuplicateString(const char *value);
+
 #ifdef __ANDROID__
 #define _IS_ANDROID_
 #elif __linux__

@@ -173,6 +173,9 @@ void Player::dispose() {
     stopPauseEngineScheduler();
 
     mInited = false;
+    mCurrentDeviceWasDefault = true;
+    mCurrentDeviceIndex = -1;
+    memset(&mCurrentDeviceId, 0, sizeof(ma_device_id));
 
     // Clean up SoLoud
     setVoiceEndedCallback(nullptr);
@@ -198,6 +201,15 @@ void Player::setStateChangedCallback(void (*stateChangedCallback)(unsigned int))
 // here so we don't need to pull in the backend-internal header.
 namespace SoLoud { void miniaudio_setLowLatency(bool aLowLatency); }
 
+static inline PlayerErrors mapMaResult(int maResult)
+{
+    if (maResult == 0)
+        return noError;
+    if (maResult == MA_BUSY || maResult == MA_ALREADY_IN_USE)
+        return deviceBusy;
+    return backendNotInited;
+}
+
 PlayerErrors Player::init(unsigned int sampleRate, unsigned int bufferSize, unsigned int channels, int deviceID, bool lowLatency)
 {
     if (mInited)
@@ -207,14 +219,19 @@ PlayerErrors Player::init(unsigned int sampleRate, unsigned int bufferSize, unsi
     SoLoud::miniaudio_setLowLatency(lowLatency);
 
     void *playbackInfos_id = nullptr;
+    bool wasDefault = (deviceID == -1);
+    ma_device_id chosenDeviceId{};
+
     if (deviceID != -1)
     {
         // Get the device list and find the requested device
         auto const devices = listPlaybackDevices();
-        if (devices.size() == 0 || deviceID >= devices.size())
+        if (devices.size() == 0 || deviceID >= (int)devices.size())
             return noPlaybackDevicesFound;
         // Use the stored device ID from the PlaybackDevice struct
-        playbackInfos_id = (void *)&devices[deviceID].deviceId;
+        chosenDeviceId = devices[deviceID].deviceId;
+        playbackInfos_id = (void *)&chosenDeviceId;
+        wasDefault = devices[deviceID].isDefault;
     }
 
     // initialize SoLoud.
@@ -237,12 +254,15 @@ PlayerErrors Player::init(unsigned int sampleRate, unsigned int bufferSize, unsi
         mSampleRate = sampleRate;
         mBufferSize = bufferSize;
         mChannels = channels;
+        mCurrentDeviceWasDefault = wasDefault;
+        mCurrentDeviceId = chosenDeviceId;
+        mCurrentDeviceIndex = deviceID;
         // Start the deferred-pause scheduler now that the engine is in use.
         startPauseEngineScheduler();
+        return noError;
     }
-    else
-        result = backendNotInited;
-    return (PlayerErrors)result;
+    
+    return mapMaResult(result);
 }
 
 PlayerErrors Player::changeDevice(int deviceID)
@@ -250,23 +270,42 @@ PlayerErrors Player::changeDevice(int deviceID)
     if (!mInited)
         return backendNotInited;
 
-    // Get the device list and find the requested device
-    auto const devices = listPlaybackDevices();
-    if (devices.size() == 0 || deviceID >= devices.size())
-        return noPlaybackDevicesFound;
-    
-    // Use the stored device ID from the PlaybackDevice struct
-    void *playbackInfos_id = (void *)&devices[deviceID].deviceId;
+    void *playbackInfos_id = nullptr;
+    bool newWasDefault = (deviceID == -1);
+    ma_device_id newDeviceId{};
+
+    if (deviceID != -1)
+    {
+        // Get the device list and find the requested device
+        auto const devices = listPlaybackDevices();
+        if (devices.size() == 0 || deviceID >= (int)devices.size())
+            return noPlaybackDevicesFound;
+        newDeviceId = devices[deviceID].deviceId;
+        playbackInfos_id = (void *)&newDeviceId;
+        newWasDefault = devices[deviceID].isDefault;
+    }
 
     int result = (int)soloud.miniaudio_changeDevice(playbackInfos_id);
 
-    if (result != 0)
+    if (result == 0)
     {
-        if (result == MA_BUSY || result == MA_ALREADY_IN_USE)
-            return deviceBusy;
-        return backendNotInited;
+        mCurrentDeviceWasDefault = newWasDefault;
+        mCurrentDeviceId = newDeviceId;
+        mCurrentDeviceIndex = deviceID;
+        return noError;
     }
-    return noError;
+
+    // Attempt rollback to the previous device.
+    // If the previous device was the OS default, pass NULL instead of an all-zeroes ma_device_id.
+    void *restore_id = mCurrentDeviceWasDefault ? nullptr : (void *)&mCurrentDeviceId;
+    int restoreResult = (int)soloud.miniaudio_changeDevice(restore_id);
+
+    if (restoreResult == 0)
+    {
+        return deviceChangeFailedRestored;
+    }
+
+    return mapMaResult(result);
 }
 
 // List available playback devices.

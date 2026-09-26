@@ -525,6 +525,14 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
         if (mounted) {
           ref.read(audioInitializationCacheProvider.notifier).state = result;
           await settings.migrateLegacyAudioDevice(result.devices);
+          if (result.userMessage != null && result.userMessage!.isNotEmpty) {
+            AppSnack.show(
+              rootScaffoldMessengerKey.currentState,
+              result.userMessage!,
+              duration: const Duration(seconds: 6),
+              backgroundColor: const Color(0xFFE65100),
+            );
+          }
         }
       });
       ref.read(librarySyncProvider.future).then((changed) {
@@ -626,10 +634,8 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
       case LicenseLoadingState.licensed:
         return const MainPadPage();
       case LicenseLoadingState.unlicensed:
+        return const ActivationScreen();
       case LicenseLoadingState.error:
-        {
-          return const ActivationScreen();
-        }
       case LicenseLoadingState.timeout:
         return Scaffold(
           backgroundColor: const Color(0xFF151522),
@@ -639,8 +645,10 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(
-                    Icons.timer_off_rounded,
+                  Icon(
+                    licenseState.loadingState == LicenseLoadingState.timeout
+                        ? Icons.timer_off_rounded
+                        : Icons.error_outline_rounded,
                     color: Colors.amberAccent,
                     size: 56,
                   ),

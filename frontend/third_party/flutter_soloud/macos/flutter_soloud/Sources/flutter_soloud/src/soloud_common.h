@@ -3,9 +3,6 @@
 #ifndef SOLOUD_COMMON_H
 #define SOLOUD_COMMON_H
 
-// Implemented by the shared source included from src/flutter_soloud.cpp.
-// Keep this as a declaration: Swift Package Manager compiles the macOS
-// wrapper and the shared sources as one translation unit.
 char *soloudDuplicateString(const char *value);
 
 #ifdef __ANDROID__

@@ -154,18 +154,13 @@ void main() {
       );
     });
 
-    test('preloadAll acepta List<AudioLoadRequest> y Map<String, String>', () async {
+    test('preloadAll acepta List<AudioLoadRequest>', () async {
       await engine.initialize();
       expect(
         () => engine.preloadAll([
           const AudioLoadRequest(id: 'pad-1', path: 'path/1.wav', needsRandomAccess: true),
           const AudioLoadRequest(id: 'pad-2', path: 'path/2.wav', needsRandomAccess: false),
         ]),
-        returnsNormally,
-      );
-
-      expect(
-        () => engine.preloadAll({'pad-3': 'path/3.wav'}),
         returnsNormally,
       );
     });

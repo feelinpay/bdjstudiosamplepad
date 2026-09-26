@@ -87,7 +87,7 @@ void PitchShiftInstance::setFilterParameter(unsigned int aAttributeId,
         aValue > mParent->getParamMax(PitchShift::SEMITONES))
       return;
     mParam[PitchShift::SEMITONES] = aValue;
-    mParam[PitchShift::SHIFT] = pow(2., aValue / 12.);
+    mParam[PitchShift::SHIFT] = powf(2.0f, aValue / 12.0f);
     break;
   }
 
@@ -111,7 +111,7 @@ SoLoud::result PitchShift::setParam(unsigned int aParamIndex, float aValue) {
     if (aValue < getParamMin(SEMITONES) || aValue > getParamMax(SEMITONES))
       return SoLoud::INVALID_PARAMETER;
     mSemitones = aValue;
-    mShift = pow(2., mSemitones / 12.);
+    mShift = powf(2.0f, mSemitones / 12.0f);
     break;
   }
   return SoLoud::SO_NO_ERROR;

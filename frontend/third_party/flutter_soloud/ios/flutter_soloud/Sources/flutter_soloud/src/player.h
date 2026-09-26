@@ -293,6 +293,10 @@ public:
   /// @param time in seconds.
   void setLoopPoint(unsigned int handle, double time);
 
+  /// @brief Set the end of a seamless loop region for one voice.
+  /// @param time in seconds. Zero keeps the source end.
+  void setLoopEndPoint(unsigned int handle, double time);
+
   /// @brief Speech the given text.
   /// @param textToSpeech the text to be spoken.
   /// @param handle handle of the sound. Set to -1 if error.
@@ -641,6 +645,9 @@ public:
 
 private:
   ma_device_info *pPlaybackInfos;
+  bool mCurrentDeviceWasDefault = true;
+  ma_device_id mCurrentDeviceId{};
+  int mCurrentDeviceIndex = -1;
   std::mutex remove_handle_mutex;
   mutable std::recursive_mutex sounds_mutex;  // Protects the sounds vector (recursive to avoid deadlock in destructors)
   unsigned int mBufferSize;

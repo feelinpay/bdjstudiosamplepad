@@ -80953,7 +80953,7 @@ MA_PRIVATE ma_uint64 ma_dr_wav__metadata_process_chunk(ma_dr_wav__metadata_parse
                 if (bytesJustRead == sizeof(buffer)) {
                     ma_uint32 loopCount = ma_dr_wav_bytes_to_u32(buffer);
                     ma_uint64 calculatedLoopCount;
-                    calculatedLoopCount = (pChunkHeader->sizeInBytes - MA_DR_WAV_SMPL_BYTES) / MA_DR_WAV_SMPL_LOOP_BYTES;
+                    calculatedLoopCount = (ma_uint32)((pChunkHeader->sizeInBytes - MA_DR_WAV_SMPL_BYTES) / MA_DR_WAV_SMPL_LOOP_BYTES);
                     if (calculatedLoopCount == loopCount) {
                         bytesJustRead = ma_dr_wav__metadata_parser_read(pParser, buffer, sizeof(buffer), &bytesRead);
                         if (bytesJustRead == sizeof(buffer)) {

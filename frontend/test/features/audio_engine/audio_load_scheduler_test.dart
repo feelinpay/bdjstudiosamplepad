@@ -10,9 +10,9 @@ void main() {
 
       final scheduler = AudioLoadScheduler(
         maxConcurrent: 2,
-        load: (id, path) {
+        load: (req) {
           final c = Completer<void>();
-          completers[id] = c;
+          completers[req.id] = c;
           return c.future;
         },
       );
@@ -59,10 +59,10 @@ void main() {
 
       final scheduler = AudioLoadScheduler(
         maxConcurrent: 2,
-        load: (id, path) {
-          loadedIds.add(id);
+        load: (req) {
+          loadedIds.add(req.id);
           final c = Completer<void>();
-          completers[id] = c;
+          completers[req.id] = c;
           return c.future;
         },
       );
@@ -92,6 +92,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(loadedIds, equals(['A', 'B', 'E']));
 
+      // Finish B
       completers['B']!.complete();
       await Future<void>.delayed(Duration.zero);
       expect(loadedIds, equals(['A', 'B', 'E', 'F']));
@@ -113,10 +114,10 @@ void main() {
 
       final scheduler = AudioLoadScheduler(
         maxConcurrent: 1,
-        load: (id, path) {
-          loadedIds.add(id);
+        load: (req) {
+          loadedIds.add(req.id);
           final c = Completer<void>();
-          completers[id] = c;
+          completers[req.id] = c;
           return c.future;
         },
       );
@@ -316,6 +317,28 @@ void main() {
       // Remaining idle items (i2, i3) must be cleared and never dispatched
       expect(loadedIds, equals(['i1']));
       expect(scheduler.idlePendingCount, equals(0));
+      expect(scheduler.isIdle, isTrue);
+    });
+
+    test('synchronous error in load executes load once and returns error to caller', () async {
+      int executions = 0;
+      final scheduler = AudioLoadScheduler(
+        maxConcurrent: 2,
+        load: (AudioLoadRequest req) {
+          executions++;
+          throw StateError('sync error inside load');
+        },
+      );
+
+      final req = const AudioLoadRequest(id: 'pad-sync-err', path: 'bad.wav');
+      await expectLater(
+        scheduler.replaceQueue([req]),
+        completes,
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(executions, equals(1));
+      expect(scheduler.runningCount, equals(0));
       expect(scheduler.isIdle, isTrue);
     });
   });

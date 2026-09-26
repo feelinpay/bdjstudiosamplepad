@@ -557,4 +557,188 @@ void main() {
       );
     });
   });
+
+  group('PUNTO 1: Recuperación de arranque ante fallo o ocupación del dispositivo', () {
+    test('Dispositivo guardado que falla con un error genérico -> arranca con el predeterminado', () async {
+      final engine = MockAudioEngine();
+      engine.mockDevices = const [
+        AudioOutputDevice(id: 0, name: 'Altavoces Realtek', isDefault: true),
+        AudioOutputDevice(id: 2, name: 'DDJ-FLX4', isDefault: false),
+      ];
+      engine.simulateDeviceGenericError = true;
+
+      final result = await engine.initializeAndRestoreDevice(
+        2,
+        savedDeviceName: 'DDJ-FLX4',
+      );
+
+      expect(result.state, AudioEngineState.ready);
+      expect(result.appliedDeviceId, 0); // Arranca con el predeterminado
+      expect(result.savedDeviceInvalid, isTrue);
+      expect(result.userMessage, contains('No se pudo conectar a «DDJ-FLX4»'));
+      expect(result.userMessage, contains('Se utiliza la salida predeterminada'));
+      expect(engine.activeDeviceId, 0); // En memoria está el predeterminado
+      engine.dispose();
+    });
+
+    test('Dispositivo guardado ocupado (deviceBusy) -> arranca con predeterminado y aviso "está en uso exclusivo"', () async {
+      final engine = MockAudioEngine();
+      engine.mockDevices = const [
+        AudioOutputDevice(id: 0, name: 'Altavoces Realtek', isDefault: true),
+        AudioOutputDevice(id: 2, name: 'DDJ-FLX4', isDefault: false),
+      ];
+      engine.simulateDeviceBusy = true;
+
+      final result = await engine.initializeAndRestoreDevice(
+        2,
+        savedDeviceName: 'DDJ-FLX4',
+      );
+
+      expect(result.state, AudioEngineState.ready);
+      expect(result.appliedDeviceId, 0);
+      expect(result.savedDeviceInvalid, isTrue);
+      expect(result.userMessage, contains('«DDJ-FLX4» está en uso exclusivo por otra aplicación'));
+      expect(result.userMessage, contains('Se utiliza la salida predeterminada'));
+      expect(engine.activeDeviceId, 0);
+      engine.dispose();
+    });
+
+    test('Fallan ambos dispositivos (guardado y predeterminado) -> estado noDevice', () async {
+      final engine = MockAudioEngine();
+      engine.mockDevices = const [
+        AudioOutputDevice(id: 0, name: 'Altavoces Realtek', isDefault: true),
+        AudioOutputDevice(id: 2, name: 'DDJ-FLX4', isDefault: false),
+      ];
+      engine.simulateDeviceBusy = true;
+      engine.simulateDefaultDeviceFails = true;
+
+      final result = await engine.initializeAndRestoreDevice(
+        2,
+        savedDeviceName: 'DDJ-FLX4',
+      );
+
+      expect(result.state, AudioEngineState.noDevice);
+      expect(engine.engineState, AudioEngineState.noDevice);
+      expect(result.userMessage, isNotNull);
+      engine.dispose();
+    });
+
+    test('FLX4 da deviceBusy, fallback a predeterminado; siguiente reintento libre no arrastra mensaje de ocupado', () async {
+      final engine = MockAudioEngine();
+      engine.mockDevices = const [
+        AudioOutputDevice(id: 0, name: 'Altavoces Realtek', isDefault: true),
+        AudioOutputDevice(id: 2, name: 'DDJ-FLX4', isDefault: false),
+      ];
+      engine.simulateDeviceBusy = true;
+
+      // Intento 1: FLX4 ocupado -> fallback al predeterminado
+      final result1 = await engine.initializeAndRestoreDevice(
+        2,
+        savedDeviceName: 'DDJ-FLX4',
+      );
+      expect(result1.state, AudioEngineState.ready);
+      expect(result1.appliedDeviceId, 0);
+      expect(result1.userMessage, contains('«DDJ-FLX4» está en uso exclusivo por otra aplicación'));
+
+      // Se libera el dispositivo
+      engine.simulateDeviceBusy = false;
+
+      // Intento 2: retry o nuevo inicio -> abre el FLX4 directamente sin mensaje de ocupado
+      final result2 = await engine.retryAudioInitialization(
+        2,
+        savedDeviceName: 'DDJ-FLX4',
+      );
+      expect(result2.state, AudioEngineState.ready);
+      expect(result2.appliedDeviceId, 2);
+      expect(result2.savedDeviceInvalid, isFalse);
+      expect(result2.userMessage, isNull);
+      engine.dispose();
+    });
+  });
+
+  group('PUNTO 4: Recuperación de changeDevice (código 33 y fallback a default)', () {
+    test('Un fallo que restaura el dispositivo anterior deja el motor en ready y no guarda la preferencia', () async {
+      SharedPreferences.setMockInitialValues({
+        'audio_output_device_id': 0,
+        'audio_output_device_name': 'Altavoces Realtek',
+      });
+      final prefs = await SharedPreferences.getInstance();
+      final settings = SettingsService.withPrefs(prefs);
+
+      final engine = MockAudioEngine();
+      engine.mockDevices = const [
+        AudioOutputDevice(id: 0, name: 'Altavoces Realtek', isDefault: true),
+        AudioOutputDevice(id: 2, name: 'DDJ-FLX4', isDefault: false),
+      ];
+
+      await engine.initializeAndRestoreDevice(0, savedDeviceName: 'Altavoces Realtek');
+      expect(engine.activeDeviceId, 0);
+      expect(engine.engineState, AudioEngineState.ready);
+
+      // Simular que el intento de cambiar a DDJ-FLX4 falla pero C++ restaura el anterior (código 33)
+      engine.simulateDeviceChangeFailedRestored = true;
+      await engine.selectOutputDevice(2);
+
+      // Motor sigue en ready
+      expect(engine.engineState, AudioEngineState.ready);
+      // activeDeviceId vuelve / se mantiene en el dispositivo anterior (0)
+      expect(engine.activeDeviceId, 0);
+      // Mensaje de aviso al usuario
+      expect(engine.lastErrorMessage, 'No se pudo cambiar a «DDJ-FLX4». Se mantiene la salida anterior.');
+
+      // Simulamos la lógica de SettingsScreen: si lastErrorMessage != null, NO se guarda la preferencia
+      if (engine.lastErrorMessage == null) {
+        await settings.setAudioOutputDeviceId(2);
+        await settings.setAudioOutputDeviceName('DDJ-FLX4');
+      }
+
+      // La preferencia guardada no debe haber cambiado a DDJ-FLX4
+      expect(settings.audioOutputDeviceId, 0);
+      expect(settings.audioOutputDeviceName, 'Altavoces Realtek');
+      engine.dispose();
+    });
+
+    test('Un fallo que termina en el predeterminado muestra el aviso correcto', () async {
+      SharedPreferences.setMockInitialValues({
+        'audio_output_device_id': 2,
+        'audio_output_device_name': 'Interfaz Externa',
+      });
+      final prefs = await SharedPreferences.getInstance();
+      final settings = SettingsService.withPrefs(prefs);
+
+      final engine = MockAudioEngine();
+      engine.mockDevices = const [
+        AudioOutputDevice(id: 0, name: 'Altavoces Realtek', isDefault: true),
+        AudioOutputDevice(id: 2, name: 'Interfaz Externa', isDefault: false),
+        AudioOutputDevice(id: 3, name: 'DDJ-FLX4', isDefault: false),
+      ];
+
+      await engine.initializeAndRestoreDevice(2, savedDeviceName: 'Interfaz Externa');
+      expect(engine.activeDeviceId, 2);
+
+      // Simular que al intentar cambiar a DDJ-FLX4 falla y tampoco puede volver a la Interfaz,
+      // por lo que entra el predeterminado (Altavoces Realtek, id 0)
+      engine.simulateDeviceChangeFallbackToDefault = true;
+      await engine.selectOutputDevice(3);
+
+      // Motor sigue en ready
+      expect(engine.engineState, AudioEngineState.ready);
+      // activeDeviceId pasa al predeterminado
+      expect(engine.activeDeviceId, 0);
+      // El aviso indica que no se pudo mantener la anterior y se activó la predeterminada
+      expect(
+        engine.lastErrorMessage,
+        'No se pudo cambiar a «DDJ-FLX4» ni mantener la salida anterior. Se activó la salida predeterminada.',
+      );
+
+      // Simulamos la lógica de SettingsScreen: como hubo error, no se guarda DDJ-FLX4
+      if (engine.lastErrorMessage == null) {
+        await settings.setAudioOutputDeviceId(3);
+        await settings.setAudioOutputDeviceName('DDJ-FLX4');
+      }
+      expect(settings.audioOutputDeviceId, 2);
+      expect(settings.audioOutputDeviceName, 'Interfaz Externa');
+      engine.dispose();
+    });
+  });
 }

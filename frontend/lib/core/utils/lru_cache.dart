@@ -7,16 +7,24 @@ class LruCache<K, V> {
   int _totalWeight = 0;
   final LinkedHashMap<K, V> _map = LinkedHashMap<K, V>();
   final void Function(K key, V value)? onEvict;
+  final bool Function(K key, V value)? canEvict;
 
   LruCache(
     this.capacity, {
     this.weigh,
     int? maxWeight,
     this.onEvict,
+    this.canEvict,
   }) : _maxWeight = maxWeight;
 
   int? get maxWeight => _maxWeight;
   int get totalWeight => _totalWeight;
+
+  /// Vuelve a evaluar la capacidad y el peso, desalojando elementos que
+  /// ahora puedan ser desalojados.
+  void trim() {
+    _evictToLimits();
+  }
 
   V? get(K key) {
     if (!_map.containsKey(key)) return null;
@@ -71,13 +79,30 @@ class LruCache<K, V> {
     // Si un único elemento supera maxWeight, queda como único residente para evitar bucle infinito.
     while (_map.length > capacity ||
         (_maxWeight != null && _totalWeight > _maxWeight! && _map.length > 1)) {
-      var oldestKey = _map.keys.first;
-      var oldestValue = _map.remove(oldestKey) as V;
+      K? evictKey;
+      V? evictValue;
+
+      for (var entry in _map.entries) {
+        if (canEvict == null || canEvict!(entry.key, entry.value)) {
+          evictKey = entry.key;
+          evictValue = entry.value;
+          break;
+        }
+      }
+
+      // Si ninguna entrada se puede desalojar (p.ej. todas en reproducción),
+      // se interrumpe el bucle permitiendo que la caché quede temporalmente
+      // por encima del límite sin entrar en bucle infinito.
+      if (evictKey == null) {
+        break;
+      }
+
+      _map.remove(evictKey);
       if (weigh != null) {
-        _totalWeight -= weigh!(oldestValue);
+        _totalWeight -= weigh!(evictValue as V);
         if (_totalWeight < 0) _totalWeight = 0;
       }
-      onEvict?.call(oldestKey, oldestValue);
+      onEvict?.call(evictKey, evictValue as V);
     }
   }
 

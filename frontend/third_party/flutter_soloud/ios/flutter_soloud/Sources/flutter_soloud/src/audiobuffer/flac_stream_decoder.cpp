@@ -125,9 +125,10 @@ std::pair<std::vector<float>, DecoderError> FlacDecoderWrapper::decode(std::vect
     // Now, use 'clean_audio_data' with the existing OGG/FLAC pipeline
     if (!clean_audio_data.empty())
     {
-        char *ogg_buffer = ogg_sync_buffer(&m_oy, clean_audio_data.size());
+  char *ogg_buffer =
+      ogg_sync_buffer(&m_oy, static_cast<long>(clean_audio_data.size()));
         memcpy(ogg_buffer, clean_audio_data.data(), clean_audio_data.size());
-        ogg_sync_wrote(&m_oy, clean_audio_data.size());
+  ogg_sync_wrote(&m_oy, static_cast<long>(clean_audio_data.size()));
     }
     buffer.clear(); // Clear the original buffer as it has been processed
 
@@ -284,7 +285,7 @@ FLAC__StreamDecoderWriteStatus FlacDecoderWrapper::write_callback(const FLAC__St
 
     for (size_t i = 0; i < num_samples; ++i)
     {
-        for (unsigned channel = 0; channel < self->m_channels; ++channel)
+  for (int channel = 0; channel < self->m_channels; ++channel)
         {
             self->m_decodedPcm.push_back(static_cast<float>(buffer[channel][i]) / divisor);
         }

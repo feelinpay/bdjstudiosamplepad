@@ -15,9 +15,9 @@ export '../../../core/audio/audio_load_request.dart';
 class AudioLoadScheduler {
   AudioLoadScheduler({
     required this.maxConcurrent,
-    required dynamic load,
+    required Future<void> Function(AudioLoadRequest request) load,
     this.canDispatchIdle,
-  }) : _load = _wrapLoad(load);
+  }) : _load = ((request) => Future.sync(() => load(request)));
 
   final int maxConcurrent;
   final Future<void> Function(AudioLoadRequest request) _load;
@@ -26,25 +26,6 @@ class AudioLoadScheduler {
   final _idlePending = LinkedHashMap<String, AudioLoadRequest>();
   int _running = 0;
   Completer<void>? _primaryCompleter;
-
-  static Future<void> Function(AudioLoadRequest) _wrapLoad(dynamic fn) {
-    if (fn is Future<void> Function(AudioLoadRequest)) {
-      return fn;
-    }
-    return (AudioLoadRequest req) {
-      if (fn is Future<void> Function(String, String, bool)) {
-        return fn(req.id, req.path, req.needsRandomAccess);
-      }
-      try {
-        final res = (fn as Function)(req.id, req.path, needsRandomAccess: req.needsRandomAccess);
-        if (res is Future<void>) return res;
-      } catch (_) {
-        final res = (fn as Function)(req.id, req.path);
-        if (res is Future<void>) return res;
-      }
-      return Future.value();
-    };
-  }
 
   @visibleForTesting
   int get runningCount => _running;

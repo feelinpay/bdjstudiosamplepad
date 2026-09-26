@@ -46,7 +46,17 @@ namespace SoLoud
 		if (mParent->mData == NULL)
 			return 0;
 
-		unsigned int dataleft = mParent->mActualSampleCount - mOffset;
+		unsigned int loopEnd = mParent->mActualSampleCount;
+		if (mLoopEndPoint > 0)
+		{
+			unsigned int requestedEnd = (unsigned int)floor(mParent->mBaseSamplerate * mLoopEndPoint);
+			if (requestedEnd < loopEnd)
+				loopEnd = requestedEnd;
+		}
+		if (mOffset >= loopEnd)
+			return 0;
+
+		unsigned int dataleft = loopEnd - mOffset;
 		unsigned int copylen = dataleft;
 		if (copylen > aSamplesToRead)
 			copylen = aSamplesToRead;

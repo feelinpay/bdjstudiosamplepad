@@ -12,10 +12,10 @@
 #   - LINK_LIBRARIES  (SoLoud link libraries, from src.cmake)
 
 # --- SoLoud configuration ---
-message("**************** SOLOUD CONFIGURE.CMAKE")
+message(STATUS "Configuring SoLoud")
 include (${SRC_DIR}/Configure.cmake)
 
-message("**************** SOLOUD SRC.CMAKE START")
+message(STATUS "Loading SoLoud sources")
 if (UNIX AND NOT WIN32 AND NOT APPLE)
 	if (CMAKE_SIZEOF_VOID_P MATCHES "8")
 		set (LIB_POSTFIX "64" CACHE STRING "suffix for 32/64 dir placement")
@@ -34,7 +34,7 @@ include_directories(${SRC_DIR}/soloud/src)
 include_directories(${SRC_DIR}/pffft)
 include_directories(${SRC_DIR})
 include (${SRC_DIR}/src.cmake)
-message("**************** SOLOUD SRC.CMAKE END  ${TARGET_NAME}")
+message(STATUS "SoLoud sources loaded")
 
 # --- Plugin source files (common across all platforms) ---
 list(APPEND PLUGIN_SOURCES

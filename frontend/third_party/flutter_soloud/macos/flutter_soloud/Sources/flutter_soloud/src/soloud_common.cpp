@@ -1,5 +1,15 @@
 #include "soloud_common.h"
 
+#include <cstdlib>
+#include <cstring>
+
+char *soloudDuplicateString(const char *value) {
+  const size_t length = std::strlen(value) + 1;
+  auto *copy = static_cast<char *>(std::malloc(length));
+  if (copy != nullptr) std::memcpy(copy, value, length);
+  return copy;
+}
+
 #ifdef _IS_ANDROID_
 #include <android/log.h>
 #endif

@@ -91,9 +91,15 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
   void _applyValidationResult(Result<LicenseInfo> result) {
     result.fold(
       (failure) {
-        final isClock = failure is ClockFailure ||
-            failure.message.contains('retrocedió de forma anormal') ||
-            failure.message.toLowerCase().contains('reloj');
+        if (failure.isTransient) {
+          state = state.copyWith(
+            loadingState: LicenseLoadingState.error,
+            status: _manager.currentStatus,
+            error: failure.message,
+          );
+          return;
+        }
+        final isClock = failure is ClockFailure;
         state = state.copyWith(
           loadingState: isClock
               ? LicenseLoadingState.clockError
@@ -178,7 +184,7 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
     result.fold(
       (failure) {
         state = state.copyWith(
-          loadingState: LicenseLoadingState.error,
+          loadingState: LicenseLoadingState.unlicensed,
           error: failure.message,
         );
       },
@@ -220,6 +226,7 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
   }
 
   Future<void> sync({bool force = false}) async {
+    final generation = _checkGeneration;
     if (!force) {
       final lastCheck = await _manager.getLastLicenseCheckUtc();
       final now = DateTime.now().toUtc();
@@ -231,11 +238,15 @@ class LicenseNotifier extends StateNotifier<LicenseState> {
     _manager.clearFingerprintCache();
     try {
       final result = await _manager.syncLicense().timeout(_checkBudget);
+      if (generation != _checkGeneration) return;
       result.fold(
         (failure) {
-          final isClock = failure is ClockFailure ||
-              failure.message.contains('retrocedió de forma anormal') ||
-              failure.message.toLowerCase().contains('reloj');
+          // Si el fallo es transitorio (ej. DPAPI / Keystore / Storage),
+          // NUNCA degradamos a unlicensed al usuario en sincronización de fondo.
+          if (failure.isTransient) {
+            return;
+          }
+          final isClock = failure is ClockFailure;
           state = state.copyWith(
             loadingState: isClock
                 ? LicenseLoadingState.clockError

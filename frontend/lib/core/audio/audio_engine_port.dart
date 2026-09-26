@@ -45,6 +45,10 @@ abstract class AudioEnginePort {
   /// sin depender de un único bool isLoading.
   AudioEngineState get engineState;
 
+  /// ID del dispositivo de salida actualmente en uso en memoria por el motor de audio,
+  /// o null si no se ha abierto ningún dispositivo o se usa el predeterminado del sistema.
+  int? get activeDeviceId;
+
   void setSoundCacheCapacity(int capacity);
 
   /// Configura el presupuesto de memoria de la caché en bytes según el perfil de hardware.
@@ -53,9 +57,9 @@ abstract class AudioEnginePort {
   bool isLoaded(String id);
   Future<void> loadAudio(String id, String assetPath, {bool needsRandomAccess = false});
 
-  /// Sustituye la cola de precarga con [requests] (List<AudioLoadRequest> o Map<String, String>)
+  /// Sustituye la cola de precarga con [requests]
   /// y no espera a que termine. Descarta los audios pendientes de la precarga anterior.
-  Future<void> preloadAll(dynamic requests);
+  Future<void> preloadAll(List<AudioLoadRequest> requests);
 
   /// Encola audios en la cola de baja prioridad (idle), que solo se ejecutan
   /// cuando la cola primaria está vacía y la concurrencia activa es 0.

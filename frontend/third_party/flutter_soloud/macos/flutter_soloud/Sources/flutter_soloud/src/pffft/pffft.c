@@ -1104,7 +1104,7 @@ static void rffti1_ps(int n, float *wa, int *ifac)
   int k1, j, ii;
 
   int nf = decompose(n,ifac,ntryh);
-  float argh = (2*M_PI) / n;
+  float argh = (float)((2.0 * M_PI) / n);
   int is = 0;
   int nfm1 = nf - 1;
   int l1 = 1;
@@ -1122,8 +1122,8 @@ static void rffti1_ps(int n, float *wa, int *ifac)
       for (ii = 3; ii <= ido; ii += 2) {
         i += 2;
         fi += 1;
-        wa[i - 2] = cos(fi*argld);
-        wa[i - 1] = sin(fi*argld);
+          wa[i - 2] = cosf(fi * argld);
+          wa[i - 1] = sinf(fi * argld);
       }
       is += ido;
     }
@@ -1137,7 +1137,7 @@ void cffti1_ps(int n, float *wa, int *ifac)
   int k1, j, ii;
 
   int nf = decompose(n,ifac,ntryh);
-  float argh = (2*M_PI)/(float)n;
+  float argh = (float)((2.0 * M_PI) / (float)n);
   int i = 1;
   int l1 = 1;
   for (k1=1; k1<=nf; k1++) {
@@ -1157,8 +1157,8 @@ void cffti1_ps(int n, float *wa, int *ifac)
       for (ii = 4; ii <= idot; ii += 2) {
         i += 2;
         fi += 1;
-        wa[i-1] = cos(fi*argld);
-        wa[i] = sin(fi*argld);
+          wa[i-1] = cosf(fi * argld);
+          wa[i] = sinf(fi * argld);
       }
       if (ip > 5) {
         wa[i1-1] = wa[i-1];
@@ -1187,19 +1187,19 @@ v4sf *cfftf1_ps(int n, const v4sf *input_readonly, v4sf *work1, v4sf *work2, con
         int ix2 = iw + idot;
         int ix3 = ix2 + idot;
         int ix4 = ix3 + idot;
-        passf5_ps(idot, l1, in, out, &wa[iw], &wa[ix2], &wa[ix3], &wa[ix4], isign);
+        passf5_ps(idot, l1, in, out, &wa[iw], &wa[ix2], &wa[ix3], &wa[ix4], (float)isign);
       } break;
       case 4: {
         int ix2 = iw + idot;
         int ix3 = ix2 + idot;
-        passf4_ps(idot, l1, in, out, &wa[iw], &wa[ix2], &wa[ix3], isign);
+        passf4_ps(idot, l1, in, out, &wa[iw], &wa[ix2], &wa[ix3], (float)isign);
       } break;
       case 2: {
-        passf2_ps(idot, l1, in, out, &wa[iw], isign);
+        passf2_ps(idot, l1, in, out, &wa[iw], (float)isign);
       } break;
       case 3: {
         int ix2 = iw + idot;
-        passf3_ps(idot, l1, in, out, &wa[iw], &wa[ix2], isign);
+        passf3_ps(idot, l1, in, out, &wa[iw], &wa[ix2], (float)isign);
       } break;
       default:
         assert(0);
@@ -1258,9 +1258,9 @@ PFFFT_Setup *pffft_new_setup(int N, pffft_transform_t transform) {
     int i = k/SIMD_SZ;
     int j = k%SIMD_SZ;
     for (m=0; m < SIMD_SZ-1; ++m) {
-      float A = -2*M_PI*(m+1)*k / N;
-      s->e[(2*(i*3 + m) + 0) * SIMD_SZ + j] = cos(A);
-      s->e[(2*(i*3 + m) + 1) * SIMD_SZ + j] = sin(A);
+      float A = (float)(-2.0 * M_PI * (m + 1) * k / N);
+      s->e[(2*(i*3 + m) + 0) * SIMD_SZ + j] = cosf(A);
+      s->e[(2*(i*3 + m) + 1) * SIMD_SZ + j] = sinf(A);
     }
   }
 

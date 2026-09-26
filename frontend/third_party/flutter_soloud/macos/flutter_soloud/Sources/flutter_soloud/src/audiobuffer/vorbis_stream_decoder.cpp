@@ -55,7 +55,7 @@ AudioMetadata VorbisDecoderWrapper::getMetadata() {
     metadata.oggMetadata.vorbisInfo.bitrate_lower = vi.bitrate_lower;
     metadata.oggMetadata.vorbisInfo.bitrate_window = vi.bitrate_window;
 
-    for (uint32_t i = 0; i < vc.comments; i++) {
+  for (int i = 0; i < vc.comments; i++) {
         char* comment = vc.user_comments[i];
         int length = vc.comment_lengths[i];
         std::string commentStr(comment, length);
@@ -87,9 +87,9 @@ std::pair<std::vector<float>, DecoderError> VorbisDecoderWrapper::decode(std::ve
     }
 
     // Write new bytes into ogg buffer
-    char* oggBuffer = ogg_sync_buffer(&oy, buffer.size());
+  char* oggBuffer = ogg_sync_buffer(&oy, static_cast<long>(buffer.size()));
     memcpy(oggBuffer, buffer.data(), buffer.size());
-    ogg_sync_wrote(&oy, buffer.size());
+  ogg_sync_wrote(&oy, static_cast<long>(buffer.size()));
     buffer.clear();
 
     // Process available pages

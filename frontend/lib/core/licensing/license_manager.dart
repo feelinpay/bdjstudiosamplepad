@@ -27,7 +27,7 @@ class LicenseManager implements LicensingPort {
   final SecurityPort _secureStorage;
   final DeviceFingerprint _fingerprint;
   final String productCode;
-  final String defaultAppVersion;
+  final String? defaultAppVersion;
   final DateTime Function() _clock;
 
   LicenseStatus _currentStatus = LicenseStatus.none;
@@ -38,7 +38,7 @@ class LicenseManager implements LicensingPort {
     required SecurityPort secureStorage,
     required DeviceFingerprint fingerprint,
     this.productCode = 'bdj_studio_sample_pad',
-    this.defaultAppVersion = '1.0.3',
+    this.defaultAppVersion,
     DateTime Function()? clock,
   }) : _secureStorage = secureStorage,
        _fingerprint = fingerprint,
@@ -58,6 +58,10 @@ class LicenseManager implements LicensingPort {
 
   Future<String> _getAppVersion() async {
     if (_cachedAppVersion != null) return _cachedAppVersion!;
+    if (defaultAppVersion != null) {
+      _cachedAppVersion = defaultAppVersion!;
+      return _cachedAppVersion!;
+    }
     try {
       final packageInfo = await PackageInfo.fromPlatform();
       if (packageInfo.version.isNotEmpty && packageInfo.version != 'Cargando...') {
@@ -65,7 +69,7 @@ class LicenseManager implements LicensingPort {
         return _cachedAppVersion!;
       }
     } catch (_) {}
-    _cachedAppVersion = defaultAppVersion;
+    _cachedAppVersion = '1.0.3';
     return _cachedAppVersion!;
   }
 
@@ -79,34 +83,45 @@ class LicenseManager implements LicensingPort {
     return _cachedFingerprint!;
   }
 
+  bool _legacyStorageMigrated = false;
+
   Future<void> _migrateLegacyStorageIfNeeded() async {
-    var result = await _secureStorage.readSecure(LicenseStorageKeys.licenseKey);
+    if (_legacyStorageMigrated) return;
+    final result = await _secureStorage.readSecure(LicenseStorageKeys.licenseKey);
+    if (result.isLeft()) return;
     final currentKey = result.getOrElse(() => null);
     if (currentKey == null || currentKey.isEmpty) {
-      final legacyKey = (await _secureStorage.readSecure(LicenseStorageKeys.legacyLicenseKey)).getOrElse(() => null);
+      final legacyResult = await _secureStorage.readSecure(LicenseStorageKeys.legacyLicenseKey);
+      if (legacyResult.isLeft()) return;
+      final legacyKey = legacyResult.getOrElse(() => null);
       if (legacyKey != null && legacyKey.isNotEmpty) {
-        final legacyStatus = (await _secureStorage.readSecure(LicenseStorageKeys.legacyLicenseStatus)).getOrElse(() => null) ?? LicenseStatus.active.name;
-        await _secureStorage.storeSecure(LicenseStorageKeys.licenseKey, legacyKey);
-        await _secureStorage.storeSecure(LicenseStorageKeys.licenseStatus, legacyStatus);
-        final verifiedKey = (await _secureStorage.readSecure(LicenseStorageKeys.licenseKey)).getOrElse(() => null);
+        final legacyStatusResult = await _secureStorage.readSecure(LicenseStorageKeys.legacyLicenseStatus);
+        if (legacyStatusResult.isLeft()) return;
+        final legacyStatus = legacyStatusResult.getOrElse(() => null) ?? LicenseStatus.active.name;
+        final storeKeyRes = await _secureStorage.storeSecure(LicenseStorageKeys.licenseKey, legacyKey);
+        if (storeKeyRes.isLeft()) return;
+        final storeStatusRes = await _secureStorage.storeSecure(LicenseStorageKeys.licenseStatus, legacyStatus);
+        if (storeStatusRes.isLeft()) return;
+        final verifiedResult = await _secureStorage.readSecure(LicenseStorageKeys.licenseKey);
+        if (verifiedResult.isLeft()) return;
+        final verifiedKey = verifiedResult.getOrElse(() => null);
         if (verifiedKey == legacyKey) {
           await _secureStorage.deleteSecure(LicenseStorageKeys.legacyLicenseKey);
           await _secureStorage.deleteSecure(LicenseStorageKeys.legacyLicenseStatus);
         }
       }
     }
+    _legacyStorageMigrated = true;
   }
 
-  Future<String?> _readStoredKey() async {
+  Future<Result<String?>> _readStoredKey() async {
     await _migrateLegacyStorageIfNeeded();
-    var result = await _secureStorage.readSecure(LicenseStorageKeys.licenseKey);
-    return result.getOrElse(() => null);
+    return _secureStorage.readSecure(LicenseStorageKeys.licenseKey);
   }
 
-  Future<String?> _readStoredStatus() async {
+  Future<Result<String?>> _readStoredStatus() async {
     await _migrateLegacyStorageIfNeeded();
-    var result = await _secureStorage.readSecure(LicenseStorageKeys.licenseStatus);
-    return result.getOrElse(() => null);
+    return _secureStorage.readSecure(LicenseStorageKeys.licenseStatus);
   }
 
 
@@ -146,8 +161,17 @@ class LicenseManager implements LicensingPort {
 
   @override
   Future<Result<LicenseInfo>> validateLicense() async {
-    final storedKey = await _readStoredKey();
-    final storedStatus = await _readStoredStatus();
+    final keyResult = await _readStoredKey();
+    if (keyResult.isLeft()) {
+      return Left(keyResult.fold((l) => l, (r) => throw StateError('')));
+    }
+    final storedKey = keyResult.getOrElse(() => null);
+
+    final statusResult = await _readStoredStatus();
+    if (statusResult.isLeft()) {
+      return Left(statusResult.fold((l) => l, (r) => throw StateError('')));
+    }
+    final storedStatus = statusResult.getOrElse(() => null);
 
     if (storedKey == null || storedKey.isEmpty) {
       _currentStatus = LicenseStatus.none;
@@ -167,7 +191,10 @@ class LicenseManager implements LicensingPort {
       final appVersion = await _getAppVersion();
       final verification = await _activateAndVerifySpp3(storedKey, fingerprint, appVersion);
       if (verification.isLeft()) {
-        _currentStatus = LicenseStatus.invalid;
+        final failure = verification.fold((l) => l, (r) => throw StateError(''));
+        if (!failure.isTransient) {
+          _currentStatus = LicenseStatus.invalid;
+        }
         return verification;
       }
       _currentStatus = LicenseStatus.active;
@@ -204,6 +231,9 @@ class LicenseManager implements LicensingPort {
 
       // Protección contra retroceso de reloj (Anti-Tamper / Time Travel Protection)
       final lastCheckResult = await _secureStorage.readSecure(LicenseStorageKeys.lastLicenseCheckUtc);
+      if (lastCheckResult.isLeft()) {
+        return Left(lastCheckResult.fold((l) => l, (r) => throw StateError('')));
+      }
       final lastCheck = DateTime.tryParse(lastCheckResult.getOrElse(() => null) ?? '')?.toUtc();
       if (payload.expiresAtUtc != null &&
           lastCheck != null &&
@@ -246,8 +276,11 @@ class LicenseManager implements LicensingPort {
           remainingOfflineDays: remainingDays > 0 ? remainingDays : 0,
         ),
       );
-    } catch (e) {
-      return Left(LicenseFailure('Error interno durante la verificación criptográfica SPP3: $e'));
+    } on FormatException catch (e) {
+      _currentStatus = LicenseStatus.invalid;
+      return Left(LicenseFailure('Formato de licencia inválido o corrupto: ${e.message}'));
+    } catch (e, stack) {
+      return Left(SecurityFailure('Error interno durante la verificación criptográfica SPP3: $e', stackTrace: stack));
     }
   }
 

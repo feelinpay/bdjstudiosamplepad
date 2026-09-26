@@ -345,6 +345,8 @@ namespace SoLoud
 
 		// Set voice loop point value
 		void setLoopPoint(handle aVoiceHandle, time aLoopPoint);
+		// Set the end of a voice loop region. Zero uses the source end.
+		void setLoopEndPoint(handle aVoiceHandle, time aLoopEndPoint);
 		// Set voice's loop state
 		void setLooping(handle aVoiceHandle, bool aLooping);
 		// Set whether sound should auto-stop when it ends

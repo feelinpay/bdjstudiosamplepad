@@ -35,8 +35,8 @@ ParametricEqInstance::ParametricEqInstance(ParametricEq *aParent) {
   initBandParameters();
 
   mParam[0] = mParent->mWet; // Reset wet param (index 0)
-  mParam[1] = mParent->mSTFT_WINDOW_SIZE; // Update window size param (index 1)
-  mParam[2] = mParent->mBands; // Update band count param (index 2)
+  mParam[1] = static_cast<float>(mParent->mSTFT_WINDOW_SIZE); // Update window size param (index 1)
+  mParam[2] = static_cast<float>(mParent->mBands); // Update band count param (index 2)
 }
 
 void ParametricEqInstance::comp2MagPhase(float *aFFTBuffer,
@@ -65,7 +65,7 @@ void ParametricEqInstance::initBandParameters() {
 
   // Re-initialize parameter arrays to match band count
   mNumParams = 3 + mBands;
-  mParam[2] = mBands; // Update band count param (index 2)
+  mParam[2] = static_cast<float>(mBands); // Update band count param (index 2)
 
   // Copy band gains into parameter slots (params[3..3+bands-1])
   for (int i = 0; i < mBands; i++) {
@@ -141,7 +141,7 @@ void ParametricEqInstance::initFFTBuffers() {
   mTemp = (float *)pffft_aligned_malloc(mParent->mSTFT_WINDOW_TWICE *
                                         sizeof(float));
 
-  mParam[1] = mParent->mSTFT_WINDOW_SIZE; // Update window size param (index 1)
+  mParam[1] = static_cast<float>(mParent->mSTFT_WINDOW_SIZE); // Update window size param (index 1)
 }
 
 ParametricEqInstance::~ParametricEqInstance() {
@@ -202,7 +202,7 @@ void ParametricEqInstance::setFilterParameter(unsigned int aAttributeId,
   case 1: // SFTF_WINDOW_SIZE
     if (mParent->mSTFT_WINDOW_SIZE == (int)aValue)
       return;
-    mParam[1] = (int)aValue; // Update window size param (index 1)
+    mParam[1] = static_cast<float>(static_cast<int>(aValue)); // Update window size param (index 1)
     mParent->mSTFT_WINDOW_SIZE = (int)aValue;
     mParent->mSTFT_WINDOW_HALF = mParent->mSTFT_WINDOW_SIZE >> 1;
     mParent->mSTFT_WINDOW_TWICE = mParent->mSTFT_WINDOW_SIZE << 1;
@@ -217,8 +217,8 @@ void ParametricEqInstance::setFilterParameter(unsigned int aAttributeId,
     // The initParams resets values. Restoring.
     mBands = mParent->mBands = (int)aValue;
     mParam[0] = mParent->mWet; // Reset wet param (index 0)
-    mParam[1] = mParent->mSTFT_WINDOW_SIZE; // Update window size param (index 1)
-    mParam[2] = mBands; // Update band count param (index 2)
+    mParam[1] = static_cast<float>(mParent->mSTFT_WINDOW_SIZE); // Update window size param (index 1)
+    mParam[2] = static_cast<float>(mBands); // Update band count param (index 2)
     // Update parent's band configuration first
     mParent->setFreqs((unsigned int)aValue);
     // Re-initialize band parameters from parent
@@ -307,7 +307,9 @@ void ParametricEqInstance::filterChannel(float *aBuffer, unsigned int aSamples,
       for (int i = 0; i < mParent->mSTFT_WINDOW_SIZE; i++) {
         float window =
             0.5f *
-            (1.0f - cosf((2.0f * M_PI * i) / mParent->mSTFT_WINDOW_SIZE));
+            (1.0f - cosf((2.0f * 3.14159265358979323846f *
+                          static_cast<float>(i)) /
+                         static_cast<float>(mParent->mSTFT_WINDOW_SIZE)));
         float sample = mFFTBuffer[i * 2] * mParent->mFFT_SCALE *
                        window; // Only use real part
         mMixBuffer[aChannel]
@@ -468,7 +470,7 @@ void ParametricEq::setFreqs(unsigned int nBands) {
   if (mBands == 1) {
     mFreq[0] = 1000.0f;
   } else {
-    for (int i = 0; i < mBands; i++) {
+    for (unsigned int i = 0; i < mBands; i++) {
       float t = (float)i / (float)(mBands - 1);
       mFreq[i] = f0 * powf(f1 / f0, t);
     }

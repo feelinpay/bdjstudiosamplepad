@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../utils/concurrency_shield.dart';
 
 /// Controlador reactivo para actualizar el progreso y mensajes del modal bloqueante.
 class BlockingProgressController extends ChangeNotifier {
@@ -86,56 +85,46 @@ class BlockingProgressDialog extends StatelessWidget {
     final controller = BlockingProgressController(
       initialMessage: initialMessage ?? 'Por favor espere...',
     );
-
-    var dialogOpen = true;
-
-    // Mostrar modal bloqueante
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      useRootNavigator: true,
-      builder: (_) => BlockingProgressDialog(
-        title: title,
-        controller: controller,
-      ),
-    ).then((_) {
-      dialogOpen = false;
-    });
-
+    final close = show(context, title: title, controller: controller);
     try {
       return await task(controller);
     } finally {
-      if (dialogOpen && context.mounted) {
-        ConcurrencyShield.safeRootPop(context);
-      }
-      controller.dispose();
+      close();
+      // El diálogo se desmonta en el frame siguiente; liberar el controlador
+      // antes haría que su ListenableBuilder quedara escuchando un objeto dispuesto.
+      WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
     }
   }
 
-  /// Muestra el diálogo manualmente devolviendo una función de cierre.
-  /// Preferir [run] siempre que sea posible.
+  /// Muestra el diálogo y devuelve una función que lo cierra.
+  ///
+  /// El cierre NO depende de [context]: se guardan el `NavigatorState` raíz y la
+  /// ruta concreta del diálogo. Así se cierra aunque el widget que lo abrió ya
+  /// se haya desmontado (p. ej. el estado vacío del grid, que desaparece en
+  /// cuanto la importación crea el primer pad) y nunca cierra otra ruta por error.
+  /// La función es idempotente.
   static void Function() show(
     BuildContext context, {
     required String title,
     required BlockingProgressController controller,
   }) {
-    var dialogOpen = true;
-
-    showDialog<void>(
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = DialogRoute<void>(
       context: context,
       barrierDismissible: false,
-      useRootNavigator: true,
       builder: (_) => BlockingProgressDialog(
         title: title,
         controller: controller,
       ),
-    ).then((_) {
-      dialogOpen = false;
-    });
+    );
+    navigator.push(route);
 
+    var closed = false;
     return () {
-      if (dialogOpen && context.mounted) {
-        ConcurrencyShield.safeRootPop(context);
+      if (closed) return;
+      closed = true;
+      if (route.isActive) {
+        navigator.removeRoute(route);
       }
     };
   }

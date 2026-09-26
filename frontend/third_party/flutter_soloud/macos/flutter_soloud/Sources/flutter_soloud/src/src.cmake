@@ -8,8 +8,12 @@ endif ()
 
 set (TARGET_NAME soloud)
 
-set (HEADER_PATH ${CMAKE_CURRENT_LIST_DIR}/soloud/include)
-set (SOURCE_PATH ${CMAKE_CURRENT_LIST_DIR}/soloud/src)
+# Preserve SRC_DIR as a relative path on Android.  This prevents CMake/Ninja
+# from embedding the full Windows checkout path in every native object name.
+# Desktop platforms still pass an absolute SRC_DIR, so their behavior is
+# unchanged.
+set (HEADER_PATH ${SRC_DIR}/soloud/include)
+set (SOURCE_PATH ${SRC_DIR}/soloud/src)
 
 set (LINK_LIBRARIES)
 
@@ -17,7 +21,6 @@ set (LINK_LIBRARIES)
 set (TARGET_HEADERS
 	${HEADER_PATH}/soloud.h
 	${HEADER_PATH}/soloud_audiosource.h
-	${HEADER_PATH}/soloud_ay.h
 	${HEADER_PATH}/soloud_bassboostfilter.h
 	${HEADER_PATH}/soloud_biquadresonantfilter.h
 	${HEADER_PATH}/soloud_bus.h
@@ -91,13 +94,6 @@ if(WIN32 AND USE_OPENMPT)
 endif()
 set (AUDIOSOURCES_SOURCES
 	${AUDIOSOURCES_SOURCES}
-	# ay
-	${AUDIOSOURCES_PATH}/ay/chipplayer.cpp
-	${AUDIOSOURCES_PATH}/ay/sndbuffer.cpp
-	${AUDIOSOURCES_PATH}/ay/sndchip.cpp
-	${AUDIOSOURCES_PATH}/ay/sndrender.cpp
-	${AUDIOSOURCES_PATH}/ay/soloud_ay.cpp
-
 	# monotone
 	${AUDIOSOURCES_PATH}/monotone/soloud_monotone.cpp
 
@@ -303,5 +299,3 @@ if (SOLOUD_C_API)
 		${HEADER_PATH}/soloud_c.h
 	)
 endif()
-
-set_source_files_properties(${AUDIOSOURCES_PATH}/wav/stb_vorbis.c PROPERTIES LANGUAGE CXX )

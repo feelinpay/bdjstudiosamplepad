@@ -76,6 +76,8 @@ typedef enum PlayerErrors {
   busIdNotFound = 31,
   /// Audio device is busy or in exclusive use.
   deviceBusy = 32,
+  /// Audio device change failed, but previous output was restored.
+  deviceChangeFailedRestored = 33,
 } PlayerErrors_t;
 
 /// Possible read sample errors

@@ -65,11 +65,13 @@ unsigned int BufferStreamInstance::getAudio(float *aBuffer,
 
   unsigned int bufferSize = static_cast<unsigned int>(mParent->mBuffer.getFloatsBufferSize());
   float *buffer = reinterpret_cast<float *>(mParent->mBuffer.buffer.data() + mParent->mBuffer.getReadOffset());
-  int samplesToRead = aSamplesToRead;
-  if (mOffset + (unsigned int)samplesToRead * mChannels > bufferSize) {
+  unsigned int samplesToRead = aSamplesToRead;
+  if (mOffset >= bufferSize) {
+    samplesToRead = 0;
+  } else if (mOffset + samplesToRead * mChannels > bufferSize) {
     samplesToRead = (bufferSize - mOffset) / mChannels;
   }
-  if (samplesToRead <= 0) {
+  if (samplesToRead == 0) {
     memset(aBuffer, 0, sizeof(float) * aSamplesToRead * mChannels);
     // Calculate mStreamPosition based on mOffset
     mStreamPosition = mOffset / (float)(mBaseSamplerate * mChannels);
@@ -303,7 +305,7 @@ PlayerErrors BufferStream::addData(const void *aData, unsigned int aDataLen,
   }
 
   size_t bytesWritten = 0;
-  bool allDataAdded = -1;
+  bool allDataAdded = false;
   int32_t bufferDataToAdd = 0;
 
   if (!dontAdd) {
@@ -364,8 +366,8 @@ PlayerErrors BufferStream::addData(const void *aData, unsigned int aDataLen,
       if (autoTypeSamplerate == 0.f) {
         if (sampleRate != -1) {
           mPCMformat.sampleRate = sampleRate;
-          mBaseSamplerate = sampleRate;
-          autoTypeSamplerate = sampleRate;
+          mBaseSamplerate = static_cast<float>(sampleRate);
+          autoTypeSamplerate = static_cast<float>(sampleRate);
         }
         if (channels != -1) {
           mPCMformat.channels = channels;
@@ -624,11 +626,12 @@ BufferStream::convertMetadataToFFI(const AudioMetadata &metadata) {
                               metadata.oggMetadata.flacInfo.total_samples};
 
   // Copy channel mapping
-  for (size_t i = 0; i < metadata.oggMetadata.opusInfo.channel_mapping.size() &&
-                     i < MAX_CHANNEL_MAPPING;
-       i++) {
-    ffi.oggMetadata.opusInfo.channel_mapping[i] =
-        metadata.oggMetadata.opusInfo.channel_mapping[i];
+  for (size_t mappingIndex = 0;
+       mappingIndex < metadata.oggMetadata.opusInfo.channel_mapping.size() &&
+       mappingIndex < MAX_CHANNEL_MAPPING;
+       mappingIndex++) {
+    ffi.oggMetadata.opusInfo.channel_mapping[mappingIndex] =
+        metadata.oggMetadata.opusInfo.channel_mapping[mappingIndex];
   }
 
   return ffi;

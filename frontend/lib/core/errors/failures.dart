@@ -6,6 +6,14 @@ sealed class Failure {
   final StackTrace? stackTrace;
 
   const Failure(this.message, {this.code, this.stackTrace});
+
+  /// Indica si el fallo es de naturaleza transitoria (lectura de almacenamiento,
+  /// timeout, fallo de seguridad puntual del keystore/DPAPI) en lugar de una
+  /// causa definitiva de revocación (firma inválida, HWID no coincidente, etc.).
+  bool get isTransient =>
+      this is SecurityFailure ||
+      this is StorageFailure ||
+      this is UnexpectedFailure;
 }
 
 class AudioFailure extends Failure {

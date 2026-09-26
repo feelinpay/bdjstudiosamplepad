@@ -120,12 +120,12 @@ public:
         }
 
         uint64_t bytesNeeded = numSamples * sizeof(float);
-        int64_t newNumSamples = numSamples;
+        size_t newNumSamples = numSamples;
         if (buffer.size() + bytesNeeded > maxBytes)
         {
             uint64_t bytesLeft = maxBytes - buffer.size();
             newNumSamples = bytesLeft / sizeof(float);
-            if (bytesLeft <= 0)
+            if (bytesLeft == 0)
                 return 0;
         }
         const int8_t* data8 = reinterpret_cast<const int8_t*>(data);  // Convert float array to int8_t array

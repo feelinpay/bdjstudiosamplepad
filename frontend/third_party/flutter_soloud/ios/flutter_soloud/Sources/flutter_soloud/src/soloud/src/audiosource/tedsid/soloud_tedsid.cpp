@@ -91,12 +91,12 @@ namespace SoLoud
 				mRegValues[reg] = val;
 				if (reg < 64)
 				{
-					mSID->write(reg, val);
+		mSID->write((unsigned char)reg, (unsigned char)val);
 				}
 				else
 				if (reg < 64 + 5)
 				{
-					mTED->writeSoundReg(reg - 64, val);
+		mTED->writeSoundReg((unsigned char)(reg - 64), (unsigned char)val);
 				}
 			}
 		}

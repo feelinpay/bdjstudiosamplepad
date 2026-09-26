@@ -5,9 +5,9 @@
 #include <cstring>
 #include <iostream>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+namespace {
+constexpr float kPi = 3.14159265358979323846f;
+}
 
 Analyzer::Analyzer(int windowSize, float sampleRate)
     : mWindowSize(windowSize),
@@ -31,7 +31,7 @@ Analyzer::~Analyzer() = default;
 void Analyzer::blackmanWindow(float *samples, const float *waveData) const {
     memset(samples + 512, 0, 512 * sizeof(float));
     for (int i = 0; i < 256; i++) {
-        float multiplier = a0 - a1 * cosf(2 * M_PI * i / mWindowSize) + a2 * cosf(4 * M_PI * i / mWindowSize);
+        float multiplier = a0 - a1 * cosf(2.0f * kPi * static_cast<float>(i) / static_cast<float>(mWindowSize)) + a2 * cosf(4.0f * kPi * static_cast<float>(i) / static_cast<float>(mWindowSize));
         samples[i*2] = waveData[i] * multiplier;
         samples[i*2+1] = 0;
     }
@@ -43,7 +43,7 @@ void Analyzer::hanningWindow(float *samples, const float *waveData) const
     memset(samples + 512, 0, 512 * sizeof(float));
     for (int i = 0; i < 256; i++)
     {
-        samples[i * 2] = waveData[i] * 0.5f * (1.0f - cosf(2.0f * M_PI * (float)(i) / (float)(mWindowSize - 1)));
+        samples[i * 2] = waveData[i] * 0.5f * (1.0f - cosf(2.0f * kPi * static_cast<float>(i) / static_cast<float>(mWindowSize - 1)));
         samples[i * 2 + 1] = 0.0f;
     }
 }
@@ -54,7 +54,7 @@ void Analyzer::hammingWindow(float *samples, const float *waveData) const
     memset(samples + 512, 0, 512 * sizeof(float));
     for (int i = 0; i < 256; i++)
     {
-        samples[i * 2] = waveData[i] * (0.54f - 0.46f * cosf(2.0f * M_PI * i / (mWindowSize - 1)));
+        samples[i * 2] = waveData[i] * (0.54f - 0.46f * cosf(2.0f * kPi * static_cast<float>(i) / static_cast<float>(mWindowSize - 1)));
         samples[i * 2 + 1] = 0.0f;
     }
 }
@@ -63,7 +63,7 @@ void Analyzer::hammingWindow(float *samples, const float *waveData) const
 void Analyzer::gaussWindow(float *samples, const float *waveData) const
 {
     const float sigma = 0.4f;  // Standard deviation (adjustable, typical values between 0.3 and 0.5)
-    const float N = mWindowSize - 1;
+    const float N = static_cast<float>(mWindowSize - 1);
     
     memset(samples + 512, 0, 512 * sizeof(float));
     for (int i = 0; i < 256; i++)
@@ -110,15 +110,15 @@ float* Analyzer::calcFFT(float* waveData, float minFrequency, float maxFrequency
 
     SoLoud::FFT::fft1024(temp);
 
-    float real = temp[255 * 2];
-    float imag = temp[255 * 2 + 1];
-    float mag = sqrtf(real*real+imag*imag);
+    float lastReal = temp[255 * 2];
+    float lastImag = temp[255 * 2 + 1];
+    float lastMagnitude = sqrtf(lastReal * lastReal + lastImag * lastImag);
     // Apply frequency-dependent scaling
-    float freqScaling = sqrtf(255.f + 1.f);  // Adjust scaling based on frequency bin
-    mag *= freqScaling / 2.0f;  // Normalize the scaling
+    float lastFrequencyScaling = sqrtf(255.f + 1.f);  // Adjust scaling based on frequency bin
+    lastMagnitude *= lastFrequencyScaling / 2.0f;  // Normalize the scaling
     // The "+ 1.0" is to make sure I don't get negative values,
-    float t = 2.f * log10f(mag+1.0f);
-    FFTData[255] = t;
+    float lastValue = 2.f * log10f(lastMagnitude + 1.0f);
+    FFTData[255] = lastValue;
 
     for (int i = 254; i >= 0; i--)
     {

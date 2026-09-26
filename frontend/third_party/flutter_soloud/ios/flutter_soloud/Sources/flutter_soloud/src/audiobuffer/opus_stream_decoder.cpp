@@ -170,9 +170,9 @@ std::pair<std::vector<float>, DecoderError> OpusDecoderWrapper::decode(std::vect
     }
 
     // Write data into ogg sync buffer
-    char *oggBuffer = ogg_sync_buffer(&oy, buffer.size());
+  char *oggBuffer = ogg_sync_buffer(&oy, static_cast<long>(buffer.size()));
     memcpy(oggBuffer, buffer.data(), buffer.size());
-    ogg_sync_wrote(&oy, buffer.size());
+  ogg_sync_wrote(&oy, static_cast<long>(buffer.size()));
     buffer.clear();
 
     // Read and process pages

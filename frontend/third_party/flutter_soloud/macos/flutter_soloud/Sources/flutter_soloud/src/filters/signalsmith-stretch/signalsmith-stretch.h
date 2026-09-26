@@ -634,7 +634,7 @@ private:
   }
   template <Complex Band::*member>
   Complex getFractional(int channel, Sample inputIndex) {
-    int lowIndex = std::floor(inputIndex);
+			int lowIndex = static_cast<int>(std::floor(inputIndex));
     Sample fracIndex = inputIndex - lowIndex;
     return getFractional<member>(channel, lowIndex, fracIndex);
   }
@@ -714,7 +714,7 @@ private:
     Sample timeFactor = blockProcess.timeFactor;
 
     Sample smoothingBins = Sample(stft.fftSamples()) / stft.defaultInterval();
-    int longVerticalStep = std::round(smoothingBins);
+		int longVerticalStep = static_cast<int>(std::round(smoothingBins));
     timeFactor = std::max<Sample>(timeFactor, 1 / maxCleanStretch);
     bool randomTimeFactor = (timeFactor > maxCleanStretch);
     std::uniform_real_distribution<Sample> timeFactorDist(
@@ -784,7 +784,7 @@ private:
       auto *predictions = predictionsForChannel(c);
       for (int b = 0; b < bands; ++b) {
         auto mapPoint = outputMap[b];
-        int lowIndex = std::floor(mapPoint.inputBin);
+			int lowIndex = static_cast<int>(std::floor(mapPoint.inputBin));
         Sample fracIndex = mapPoint.inputBin - lowIndex;
 
         Prediction &prediction = predictions[b];
@@ -991,7 +991,7 @@ private:
       return;
     }
     Sample bottomOffset = peaks[0].input - peaks[0].output;
-    for (int b = 0; b < std::min<int>(bands, std::ceil(peaks[0].output)); ++b) {
+		for (int b = 0; b < std::min<int>(bands, static_cast<int>(std::ceil(peaks[0].output))); ++b) {
       outputMap[b] = {b + bottomOffset, 1};
     }
     // Interpolate between points
@@ -1001,8 +1001,8 @@ private:
       Sample outOffset = prev.input - prev.output;
       Sample outScale = next.input - next.output - prev.input + prev.output;
       Sample gradScale = outScale * rangeScale;
-      int startBin = std::max<int>(0, std::ceil(prev.output));
-      int endBin = std::min<int>(bands, std::ceil(next.output));
+			int startBin = std::max<int>(0, static_cast<int>(std::ceil(prev.output)));
+			int endBin = std::min<int>(bands, static_cast<int>(std::ceil(next.output)));
       for (int b = startBin; b < endBin; ++b) {
         Sample r = (b - prev.output) * rangeScale;
         Sample h = r * r * (3 - 2 * r);
@@ -1015,7 +1015,7 @@ private:
       }
     }
     Sample topOffset = peaks.back().input - peaks.back().output;
-    for (int b = std::max<int>(0, peaks.back().output); b < bands; ++b) {
+		for (int b = std::max<int>(0, static_cast<int>(peaks.back().output)); b < bands; ++b) {
       outputMap[b] = {b + topOffset, 1};
     }
   }
@@ -1069,8 +1069,8 @@ private:
     Sample weight = formantMetric[peakIndices[2]];
     // Smooth it out a bit
     freqEstimateWeighted +=
-        (peakEstimate * weight - freqEstimateWeighted) * 0.25;
-    freqEstimateWeight += (weight - freqEstimateWeight) * 0.25;
+				(peakEstimate * weight - freqEstimateWeighted) * static_cast<Sample>(0.25);
+			freqEstimateWeight += (weight - freqEstimateWeight) * static_cast<Sample>(0.25);
 
     return freqEstimateWeighted / (freqEstimateWeight + Sample(1e-30));
   }
@@ -1094,7 +1094,8 @@ private:
       if (formantBaseFreq <= 0)
         freqEstimate = estimateFrequency();
     } else if (step-- == 0) {
-      Sample decay = 1 - 1 / (freqEstimate * 0.5 + 1);
+		Sample decay = static_cast<Sample>(1) - static_cast<Sample>(1) /
+			(freqEstimate * static_cast<Sample>(0.5) + static_cast<Sample>(1));
       Sample e = 0;
       for (size_t repeat = 0; repeat < 2; ++repeat) {
         for (int b = bands - 1; b >= 0; --b) {
@@ -1121,8 +1122,8 @@ private:
       auto getFormant = [&](Sample band) -> Sample {
         if (band < 0)
           return 0;
-        band = std::min<Sample>(band, bands);
-        int floorBand = std::floor(band);
+		band = std::min<Sample>(band, static_cast<Sample>(bands));
+		int floorBand = static_cast<int>(std::floor(band));
         Sample fracBand = band - floorBand;
         Sample low = formantMetric[floorBand],
                high = formantMetric[floorBand + 1];
@@ -1130,7 +1131,7 @@ private:
       };
 
       for (int b = 0; b < bands; ++b) {
-        Sample inputF = bandToFreq(b);
+		Sample inputF = bandToFreq(static_cast<Sample>(b));
         Sample outputF = formantCompensation ? mapFreq(inputF) : inputF;
         outputF = invMapFormant(outputF);
 

@@ -71,6 +71,11 @@ jobs:
       - name: Run unit tests
         run: flutter test
 
+      - name: Verify C++ SoLoud sources are in sync
+        run: |
+          diff -r third_party/flutter_soloud/src third_party/flutter_soloud/macos/flutter_soloud/Sources/flutter_soloud/src
+          diff -r third_party/flutter_soloud/src third_party/flutter_soloud/ios/flutter_soloud/Sources/flutter_soloud/src
+
       - name: Comprobar Estado del Keychain del Runner
         run: |
           echo "=== AUDITORÍA DE KEYCHAIN EN RUNNER ==="

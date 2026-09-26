@@ -645,6 +645,9 @@ public:
 
 private:
   ma_device_info *pPlaybackInfos;
+  bool mCurrentDeviceWasDefault = true;
+  ma_device_id mCurrentDeviceId{};
+  int mCurrentDeviceIndex = -1;
   std::mutex remove_handle_mutex;
   mutable std::recursive_mutex sounds_mutex;  // Protects the sounds vector (recursive to avoid deadlock in destructors)
   unsigned int mBufferSize;

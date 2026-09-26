@@ -186,6 +186,13 @@ namespace SoLoud
 		FOR_ALL_VOICES_POST
 	}
 
+	void Soloud::setLoopEndPoint(handle aVoiceHandle, time aLoopEndPoint)
+	{
+		FOR_ALL_VOICES_PRE
+			mVoice[ch]->mLoopEndPoint = aLoopEndPoint;
+		FOR_ALL_VOICES_POST
+	}
+
 	void Soloud::setLooping(handle aVoiceHandle, bool aLooping)
 	{
 		FOR_ALL_VOICES_PRE

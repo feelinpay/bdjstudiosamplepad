@@ -676,8 +676,16 @@ class _PadSettingsDialogState extends ConsumerState<PadSettingsDialog> {
                                       midiLearnModeProvider,
                                     );
                                     if (!isLearning) {
-                                      var nav = Navigator.of(ctx);
-                                      Future.microtask(nav.pop);
+                                      // Cierra SOLO este diálogo. Un `pop` genérico
+                                      // podía ejecutarse después de que "Cancelar"
+                                      // ya lo hubiera cerrado y cerraba también la
+                                      // ventana de ajustes del pad que está debajo.
+                                      final route = ModalRoute.of(ctx);
+                                      Future.microtask(() {
+                                        if (route != null && route.isActive) {
+                                          route.navigator?.removeRoute(route);
+                                        }
+                                      });
                                     }
                                     return const Column(
                                       mainAxisSize: MainAxisSize.min,

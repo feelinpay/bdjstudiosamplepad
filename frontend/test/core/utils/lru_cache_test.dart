@@ -280,4 +280,95 @@ void main() {
       expect(evicted.keys, containsAll(<String>['a', 'b']));
     });
   });
+
+  group('canEvict y trim (protección contra desalojo en reproducción)', () {
+    test('una caché llena con todas las entradas sonando no expulsa nada y no se queda en un bucle', () {
+      final activePlaying = <String>{'a', 'b', 'c'};
+      final evicted = <String>[];
+
+      final cache = LruCache<String, int>(
+        2, // capacidad 2
+        canEvict: (k, _) => !activePlaying.contains(k),
+        onEvict: (k, _) => evicted.add(k),
+      );
+
+      // Insertamos 'a' y 'b' (ambos sonando)
+      cache.put('a', 1);
+      cache.put('b', 2);
+      expect(cache.length, 2);
+
+      // Intentamos insertar 'c' (también sonando). Como ninguno puede ser desalojado,
+      // la caché supera temporalmente la capacidad (longitud 3) sin caer en bucle infinito.
+      cache.put('c', 3);
+
+      expect(cache.length, 3);
+      expect(evicted, isEmpty);
+      expect(cache.containsKey('a'), isTrue);
+      expect(cache.containsKey('b'), isTrue);
+      expect(cache.containsKey('c'), isTrue);
+    });
+
+    test('al terminar una reproducción, trim() expulsa la entrada que sobraba', () {
+      final activePlaying = <String>{'a', 'b', 'c'};
+      final evicted = <String>[];
+
+      final cache = LruCache<String, int>(
+        2,
+        canEvict: (k, _) => !activePlaying.contains(k),
+        onEvict: (k, _) => evicted.add(k),
+      );
+
+      cache.put('a', 1);
+      cache.put('b', 2);
+      cache.put('c', 3); // Sobrecupo temporal (longitud 3)
+
+      expect(cache.length, 3);
+      expect(evicted, isEmpty);
+
+      // 'a' termina de sonar
+      activePlaying.remove('a');
+      cache.trim();
+
+      // 'a' era la más antigua y ahora es desalojable: se expulsa
+      expect(cache.length, 2);
+      expect(evicted, ['a']);
+      expect(cache.containsKey('a'), isFalse);
+      expect(cache.containsKey('b'), isTrue);
+      expect(cache.containsKey('c'), isTrue);
+    });
+
+    test('una expulsión no provoca más expulsiones en cascada', () {
+      final evicted = <String>[];
+      final cache = LruCache<String, String>(
+        10,
+        weigh: (s) => s.length,
+        maxWeight: 15,
+        onEvict: (k, v) {
+          evicted.add(k);
+          // Garantizamos que onEvict no altera el presupuesto máximo
+          // ni gatilla desalojos recursivos
+        },
+      );
+
+      cache.put('a', '12345'); // 5
+      cache.put('b', '12345'); // 5
+      cache.put('c', '12345'); // 5 -> total 15, caben exactamente
+
+      expect(cache.length, 3);
+      expect(cache.totalWeight, 15);
+      expect(evicted, isEmpty);
+
+      // Insertar 'd' de 5 bytes supera 15. Debe desalojar solo 'a' (5 bytes),
+      // total queda en 15 y length en 3. No debe desalojar 'b' ni 'c' en cascada.
+      cache.put('d', '12345');
+
+      expect(evicted, ['a']);
+      expect(cache.length, 3);
+      expect(cache.totalWeight, 15);
+      expect(cache.containsKey('a'), isFalse);
+      expect(cache.containsKey('b'), isTrue);
+      expect(cache.containsKey('c'), isTrue);
+      expect(cache.containsKey('d'), isTrue);
+    });
+  });
 }

@@ -139,6 +139,8 @@ abstract class SoLoudCppException extends SoLoudException {
         return const SoLoudBusIdNotFoundCppException();
       case PlayerErrors.deviceBusy:
         return const SoLoudDeviceBusyCppException();
+      case PlayerErrors.deviceChangeFailedRestored:
+        return const SoLoudDeviceChangeFailedRestoredCppException();
     }
   }
 

@@ -86,6 +86,7 @@ namespace SoLoud
 		mBusHandle = ~0u;
 		mLoopCount = 0;
 		mLoopPoint = 0;
+		mLoopEndPoint = 0;
 		for (i = 0; i < FILTERS_PER_STREAM; i++)
 		{
 			mFilter[i] = NULL;
@@ -350,4 +351,3 @@ namespace SoLoud
 
 
 };
-

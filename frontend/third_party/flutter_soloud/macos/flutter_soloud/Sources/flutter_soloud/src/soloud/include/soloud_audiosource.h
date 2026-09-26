@@ -187,8 +187,8 @@ namespace SoLoud
 		unsigned int mDelaySamples;
 		// When looping, start playing from this time
 		time mLoopPoint;
-		// When looping, stop reading here before returning to mLoopPoint.
-		// A value of 0 means the natural end of the source.
+		// When looping, stop reading at this time before jumping to mLoopPoint.
+		// A value of 0 keeps the original end of the source.
 		time mLoopEndPoint;
 
 		// Get N samples from the stream to the buffer. Report samples written.

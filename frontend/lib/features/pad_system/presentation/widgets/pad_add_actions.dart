@@ -642,8 +642,7 @@ class PadAddActions {
           'Carpeta seleccionada. Analizando audios...',
           duration: const Duration(seconds: 2),
         );
-        var scanningDialogOpen = true;
-        _showScanningDialog(context);
+        final closeScanning = _showScanningDialog(context);
 
         try {
           var dir = Directory(dirPath);
@@ -652,10 +651,7 @@ class PadAddActions {
             'BDJ Import Log: Scan finished. Total audios = ${rootNode.totalAudioCount}',
           );
 
-          if (context.mounted && scanningDialogOpen) {
-            ConcurrencyShield.safeRootPop(context);
-            scanningDialogOpen = false;
-          }
+          closeScanning();
 
           if (rootNode.totalAudioCount == 0) {
             if (!context.mounted) break;
@@ -671,9 +667,7 @@ class PadAddActions {
           }
         } catch (e, st) {
           debugPrint('BDJ Import Log Exception during scan: $e\n$st');
-          if (context.mounted && scanningDialogOpen) {
-            ConcurrencyShield.safeRootPop(context);
-          }
+          closeScanning();
           break;
         }
       }
@@ -723,7 +717,7 @@ class PadAddActions {
     );
 
     if (confirm != true || !context.mounted) return false;
-    _showImportingDialog(context);
+    final closeImporting = _showImportingDialog(context);
     try {
       var pageIndex = ref.read(currentPageIndexProvider);
       await ref
@@ -735,9 +729,7 @@ class PadAddActions {
       debugPrint('BDJ Import Log ERROR in importAudioDirectoryTree: $e\n$st');
       return false;
     } finally {
-      if (context.mounted) {
-        ConcurrencyShield.safeRootPop(context);
-      }
+      closeImporting();
     }
   }
 
@@ -759,7 +751,7 @@ class PadAddActions {
 
     Future<AudioFolderNode?> copyViaSaf(String uri) async {
       progressNotifier = ValueNotifier<int>(0);
-      _showScanningDialog(context, progressNotifier);
+      final closeScanning = _showScanningDialog(context, progressNotifier);
       try {
         final copied = await SafFolderImportService.copyTreeToLocalCache(
           uri,
@@ -773,21 +765,21 @@ class PadAddActions {
         debugPrint('BDJ Import Log SAF copy exception: $error\n$st');
         return null;
       } finally {
-        if (context.mounted) ConcurrencyShield.safeRootPop(context);
+        closeScanning();
       }
     }
 
     Future<AudioFolderNode?> scanDirect(String physicalPath) async {
       if (!await Directory(physicalPath).exists()) return null;
       if (!context.mounted) return null;
-      _showScanningDialog(context);
+      final closeScanning = _showScanningDialog(context);
       try {
         return await _scanAudioFolderTreeAsync(Directory(physicalPath));
       } catch (error, st) {
         debugPrint('BDJ Import Log direct scan exception: $error\n$st');
         return null;
       } finally {
-        if (context.mounted) ConcurrencyShield.safeRootPop(context);
+        closeScanning();
       }
     }
 
@@ -986,15 +978,15 @@ class PadAddActions {
 
   /// Diálogo de análisis/copia reutilizado por la importación de Workspace
   /// en móvil (mismo avance de copiado SAF).
-  static void showScanningDialog(
+  static void Function() showScanningDialog(
     BuildContext context, [
     ValueListenable<int>? copiedFiles,
   ]) {
-    _showScanningDialog(context, copiedFiles);
+    return _showScanningDialog(context, copiedFiles);
   }
 
   /// Diálogo de análisis/copia. En Android muestra el avance del copiado SAF.
-  static void _showScanningDialog(
+  static void Function() _showScanningDialog(
     BuildContext context, [
     ValueListenable<int>? copiedFiles,
   ]) {
@@ -1010,7 +1002,7 @@ class PadAddActions {
         );
       });
     }
-    BlockingProgressDialog.show(
+    return BlockingProgressDialog.show(
       context,
       title: 'Analizando carpeta de audios...',
       controller: controller,
@@ -1019,11 +1011,11 @@ class PadAddActions {
 
   /// La importación cambia Isar y copia archivos. Durante esa transacción la
   /// interfaz no debe permitir navegar ni editar un estado intermedio.
-  static void _showImportingDialog(BuildContext context) {
+  static void Function() _showImportingDialog(BuildContext context) {
     final controller = BlockingProgressController(
       initialMessage: 'Guardando audios y configurando pads...',
     );
-    BlockingProgressDialog.show(
+    return BlockingProgressDialog.show(
       context,
       title: 'Importando carpeta...',
       controller: controller,

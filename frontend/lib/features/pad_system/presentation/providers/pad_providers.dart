@@ -1085,7 +1085,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
   }
 
   /// Crea un pad tipo Macro asignado a una macro existente.
-  Future<void> addMacroPad(int macroId, String name) async {
+  Future<void> addMacroPad(int macroId, String name) => LibraryWriteLock.run(() async {
     var isar = await ref.read(isarProvider.future);
     var page = await _pageForIndex(arg);
     if (page == null) return;
@@ -1111,7 +1111,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     // Localized update: append the new macro pad only.
     final current = state.value ?? [];
     state = AsyncData([...current, for (final m in addedModels) _mapToEntity(m)]);
-  }
+  });
 
   /// Importa una carpeta completa (con sus pads y audios) desde un archivo.
   Future<void> importFolder(ImportedFolder data) =>

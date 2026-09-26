@@ -69,6 +69,18 @@ class MockAudioEngine implements AudioEnginePort {
   /// Si true, simula que el dispositivo seleccionado está ocupado por otra app.
   bool simulateDeviceBusy = false;
 
+  /// Si true, simula que el dispositivo seleccionado falla por un error genérico (no busy).
+  bool simulateDeviceGenericError = false;
+
+  /// Si true, simula que el dispositivo predeterminado también falla durante fallback.
+  bool simulateDefaultDeviceFails = false;
+
+  /// Si true, simula que selectOutputDevice falló pero restauró el dispositivo anterior (código 33).
+  bool simulateDeviceChangeFailedRestored = false;
+
+  /// Si true, simula que falló el cambio y restaurar el anterior, pero cayó al predeterminado.
+  bool simulateDeviceChangeFallbackToDefault = false;
+
   /// Último deviceId aplicado por [selectOutputDevice] o [initializeAndRestoreDevice].
   int? mockCurrentDeviceId;
 
@@ -110,12 +122,20 @@ class MockAudioEngine implements AudioEnginePort {
     int resolvedDeviceId = defaultDev.id;
     String? warningMessage;
 
-    if (simulateDeviceBusy) {
+    if (simulateDeviceBusy || simulateDeviceGenericError) {
+      if (simulateDefaultDeviceFails) {
+        mockState = AudioEngineState.noDevice;
+        return const AudioInitializationResult.noDevice(
+          userMessage:
+              'No se encontró una salida de audio disponible o no se pudo acceder al dispositivo predeterminado.',
+        );
+      }
       lastSavedDeviceFallback = true;
       resolvedDeviceId = defaultDev.id;
       final targetName = savedDeviceName ?? defaultDev.name;
-      warningMessage =
-          '«$targetName» está en uso exclusivo por otra aplicación (rekordbox, Serato, VirtualDJ). Se utiliza la salida predeterminada.';
+      warningMessage = simulateDeviceBusy
+          ? '«$targetName» está en uso exclusivo por otra aplicación (rekordbox, Serato, VirtualDJ). Se utiliza la salida predeterminada.'
+          : 'No se pudo conectar a «$targetName». Se utiliza la salida predeterminada.';
     } else if (savedDeviceName != null && savedDeviceName.isNotEmpty) {
       final found = AudioOutputDevice.findByName(
         mockDevices,
@@ -193,6 +213,26 @@ class MockAudioEngine implements AudioEnginePort {
       mockState = AudioEngineState.noDevice;
       return;
     }
+    if (simulateDeviceChangeFailedRestored) {
+      final target = deviceId == null || deviceId == -1
+          ? mockDevices.firstWhere((d) => d.isDefault, orElse: () => mockDevices.first)
+          : mockDevices.firstWhere((d) => d.id == deviceId, orElse: () => mockDevices.firstWhere((d) => d.isDefault, orElse: () => mockDevices.first));
+      mockState = AudioEngineState.ready;
+      lastErrorMessage =
+          'No se pudo cambiar a «${target.name}». Se mantiene la salida anterior.';
+      return;
+    }
+    if (simulateDeviceChangeFallbackToDefault) {
+      final target = deviceId == null || deviceId == -1
+          ? mockDevices.firstWhere((d) => d.isDefault, orElse: () => mockDevices.first)
+          : mockDevices.firstWhere((d) => d.id == deviceId, orElse: () => mockDevices.firstWhere((d) => d.isDefault, orElse: () => mockDevices.first));
+      final defaultDev = mockDevices.firstWhere((d) => d.isDefault, orElse: () => mockDevices.first);
+      mockState = AudioEngineState.ready;
+      mockCurrentDeviceId = defaultDev.id;
+      lastErrorMessage =
+          'No se pudo cambiar a «${target.name}» ni mantener la salida anterior. Se activó la salida predeterminada.';
+      return;
+    }
     if (simulateDeviceBusy) {
       final target = deviceId == null || deviceId == -1
           ? mockDevices.firstWhere((d) => d.isDefault, orElse: () => mockDevices.first)
@@ -217,6 +257,9 @@ class MockAudioEngine implements AudioEnginePort {
   AudioEngineState get engineState => mockState;
 
   @override
+  int? get activeDeviceId => mockCurrentDeviceId;
+
+  @override
   void setSoundCacheCapacity(int capacity) {}
 
   @override
@@ -233,10 +276,10 @@ class MockAudioEngine implements AudioEnginePort {
 
   double mockCacheUsageRatio = 0.0;
   final List<List<AudioLoadRequest>> preloadIdleCalls = [];
-  final List<dynamic> preloadAllCalls = [];
+  final List<List<AudioLoadRequest>> preloadAllCalls = [];
 
   @override
-  Future<void> preloadAll(dynamic requests) async {
+  Future<void> preloadAll(List<AudioLoadRequest> requests) async {
     preloadAllCalls.add(requests);
   }
 

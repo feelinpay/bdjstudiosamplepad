@@ -415,3 +415,13 @@ class SoLoudDeviceBusyCppException extends SoLoudCppException {
   String get description =>
       'The audio device is busy or in exclusive use by another application! (on the C++ side).';
 }
+
+/// The audio device could not be changed, but the previous output was restored.
+class SoLoudDeviceChangeFailedRestoredCppException extends SoLoudCppException {
+  /// Creates a new [SoLoudDeviceChangeFailedRestoredCppException].
+  const SoLoudDeviceChangeFailedRestoredCppException([super.message]);
+
+  @override
+  String get description =>
+      'The audio device could not be changed, but the previous output was restored. (on the C++ side).';
+}

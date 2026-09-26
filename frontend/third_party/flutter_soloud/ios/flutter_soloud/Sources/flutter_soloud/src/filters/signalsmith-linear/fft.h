@@ -120,7 +120,7 @@ template <typename Sample> struct SimpleFFT {
   void resize(size_t size) {
     twiddles.resize(size * 3 / 4);
     for (size_t i = 0; i < size * 3 / 4; ++i) {
-      Sample twiddlePhase = -2 * M_PI * i / size;
+		Sample twiddlePhase = static_cast<Sample>(-2 * M_PI * i / size);
       twiddles[i] = std::polar(Sample(1), twiddlePhase);
     }
     working.resize(size);
@@ -711,7 +711,9 @@ private:
     auto *f1i = f0i + innerSize;
     auto *f2r = f0r + innerSize * 2;
     auto *f2i = f0i + innerSize * 2;
-    const Sample tw1r = -0.5, tw1i = -std::sqrt(0.75) * (inverse ? -1 : 1);
+		const Sample tw1r = static_cast<Sample>(-0.5);
+		const Sample tw1i = static_cast<Sample>(
+			-std::sqrt(0.75) * (inverse ? -1 : 1));
 
     for (size_t i = 0; i < innerSize; ++i) {
       Sample ar = f0r[i], ai = f0i[i], br = f1r[i], bi = f1i[i], cr = f2r[i],
@@ -1021,13 +1023,14 @@ struct RealFFT {
       }
     } else {
       for (size_t i = 0; i < twiddles.size(); ++i) {
-        Sample rotPhase = (i + 0.5) * (-2 * M_PI / size) - M_PI / 2;
+		Sample rotPhase = static_cast<Sample>(
+			(i + 0.5) * (-2 * M_PI / size) - M_PI / 2);
         twiddles[i] = std::polar(Sample(1), rotPhase);
       }
 
       halfBinTwists.resize(hSize);
       for (size_t i = 0; i < hSize; ++i) {
-        Sample twistPhase = -2 * M_PI * i / size;
+		Sample twistPhase = static_cast<Sample>(-2 * M_PI * i / size);
         halfBinTwists[i] = std::polar(Sample(1), twistPhase);
       }
     }
@@ -1099,6 +1102,7 @@ struct RealFFT {
     } else {
       bool canUseTime = !halfBinShift && !(size_t(time) % alignof(Complex));
       if (step-- == 0) {
+        size_t hSize = complexFft.size();
         if (halfBinShift) {
           for (size_t i = 0; i < hSize; ++i) {
             Sample tr = time[2 * i], ti = time[2 * i + 1];
@@ -1259,7 +1263,6 @@ struct RealFFT {
       } else if (step < complexFft.steps()) {
         complexFft.ifft(step, tmpFreqR, tmpFreqI, tmpTimeR, tmpTimeI);
       } else {
-        size_t hSize = complexFft.size();
         if (halfBinShift) {
           for (size_t i = 0; i < hSize; ++i) {
             Sample tr = tmpTimeR[i], ti = tmpTimeI[i];

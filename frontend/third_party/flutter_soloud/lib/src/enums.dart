@@ -108,7 +108,10 @@ enum PlayerErrors {
   busIdNotFound(31),
 
   /// The audio device is busy or in exclusive use.
-  deviceBusy(32);
+  deviceBusy(32),
+
+  /// The audio device could not be changed, but the previous output was restored.
+  deviceChangeFailedRestored(33);
 
   const PlayerErrors(this.value);
 
@@ -207,6 +210,8 @@ enum PlayerErrors {
         return 'Bus id not found!';
       case PlayerErrors.deviceBusy:
         return 'The audio device is busy or in exclusive use by another application!';
+      case PlayerErrors.deviceChangeFailedRestored:
+        return 'The audio device could not be changed, but the previous output was restored.';
     }
   }
 

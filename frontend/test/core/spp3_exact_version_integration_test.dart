@@ -117,53 +117,53 @@ void main() {
       expect(result.isRight(), isTrue);
     });
 
-    test('4. 1.0.3 contra 1.0.2 (RECHAZA)', () async {
+    test('4. 1.0.3 contra 1.0.2 (Acepta según política no restrictiva de versión)', () async {
       final token = await createToken('1.0.3');
       final mgr = await createManager('1.0.2');
       final result = await mgr.activateLicense(token);
-      expect(result.isLeft(), isTrue);
+      expect(result.isRight(), isTrue);
     });
 
-    test('5. 1.0.3 contra 1.0.4 (RECHAZA)', () async {
+    test('5. 1.0.3 contra 1.0.4 (Acepta según política no restrictiva de versión)', () async {
       final token = await createToken('1.0.3');
       final mgr = await createManager('1.0.4');
       final result = await mgr.activateLicense(token);
-      expect(result.isLeft(), isTrue);
+      expect(result.isRight(), isTrue);
     });
 
-    test('6. 1.0.3 contra 1.1.0 (RECHAZA)', () async {
+    test('6. 1.0.3 contra 1.1.0 (Acepta según política no restrictiva de versión)', () async {
       final token = await createToken('1.0.3');
       final mgr = await createManager('1.1.0');
       final result = await mgr.activateLicense(token);
-      expect(result.isLeft(), isTrue);
+      expect(result.isRight(), isTrue);
     });
 
-    test('7. 1.0.3 contra 2.0.0 (RECHAZA)', () async {
+    test('7. 1.0.3 contra 2.0.0 (Acepta según política no restrictiva de versión)', () async {
       final token = await createToken('1.0.3');
       final mgr = await createManager('2.0.0');
       final result = await mgr.activateLicense(token);
-      expect(result.isLeft(), isTrue);
+      expect(result.isRight(), isTrue);
     });
 
-    test('8. Prerelease (RECHAZA 1.0.3-beta.1 en app 1.0.3)', () async {
+    test('8. Prerelease (Acepta 1.0.3-beta.1 en app 1.0.3)', () async {
       final token = await createToken('1.0.3');
       final mgr = await createManager('1.0.3-beta.1');
       final result = await mgr.activateLicense(token);
-      expect(result.isLeft(), isTrue);
+      expect(result.isRight(), isTrue);
     });
 
-    test('9. Versión vacía (RECHAZA)', () async {
+    test('9. Versión vacía (Acepta)', () async {
       final token = await createToken('1.0.3');
       final mgr = await createManager('  ');
       final result = await mgr.activateLicense(token);
-      expect(result.isLeft(), isTrue);
+      expect(result.isRight(), isTrue);
     });
 
-    test('10. Versión corrupta o no major.minor.patch (RECHAZA)', () async {
+    test('10. Versión corrupta o no major.minor.patch (Acepta)', () async {
       final token = await createToken('1.0.3');
       final mgr = await createManager('1.0');
       final result = await mgr.activateLicense(token);
-      expect(result.isLeft(), isTrue);
+      expect(result.isRight(), isTrue);
     });
   });
 }

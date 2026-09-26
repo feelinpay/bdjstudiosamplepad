@@ -64,10 +64,10 @@ unsigned int BasicwaveInstance::getAudio(float *aBuffer, unsigned int aSamplesTo
             if (mPhase >= 1.0)
                 mPhase -= 1.0;
 
-            aBuffer[i] = SoLoud::Misc::generateWaveform(
-                             mParent->mWaveform,
-                             mPhase) *
-                         mParent->mADSR.val(mT, 10000000000000.0);
+            aBuffer[i] = static_cast<float>(
+                SoLoud::Misc::generateWaveform(
+                    mParent->mWaveform, static_cast<float>(mPhase)) *
+                mParent->mADSR.val(mT, 10000000000000.0));
 
             mT += d;
         }
@@ -90,9 +90,10 @@ unsigned int BasicwaveInstance::getAudio(float *aBuffer, unsigned int aSamplesTo
                 mPhase -= 1.0;
 
             // Generate the primary waveform
-            aBuffer[i] = SoLoud::Misc::generateWaveform(
-                            mParent->mWaveform, mPhase) *
-                        mParent->mADSR.val(mT, 10000000000000.0);
+            aBuffer[i] = static_cast<float>(
+                SoLoud::Misc::generateWaveform(
+                    mParent->mWaveform, static_cast<float>(mPhase)) *
+                mParent->mADSR.val(mT, 10000000000000.0));
 
             // Generate additional harmonics
             for (int j = 0; j < 3; j++)
@@ -109,9 +110,12 @@ unsigned int BasicwaveInstance::getAudio(float *aBuffer, unsigned int aSamplesTo
                     mHarmonicPhases[j] -= 1.0;
 
                 // Generate the harmonic waveform
-                aBuffer[i] += SoLoud::Misc::generateWaveform(
-                                mParent->mWaveform, mHarmonicPhases[j]) *
-                            mParent->mADSR.val(mT, 10000000000000.0) * mParent->mSuperwaveScale;
+                aBuffer[i] += static_cast<float>(
+                    SoLoud::Misc::generateWaveform(
+                        mParent->mWaveform,
+                        static_cast<float>(mHarmonicPhases[j])) *
+                    mParent->mADSR.val(mT, 10000000000000.0) *
+                    mParent->mSuperwaveScale);
             }
 
             // Increment the time for ADSR
@@ -157,7 +161,7 @@ void Basicwave::setDetune(double aDetune)
 
 void Basicwave::setSamplerate(double aSamplerate)
 {
-    mBaseSamplerate = aSamplerate;
+    mBaseSamplerate = static_cast<float>(aSamplerate);
     mFreq = (double)(440 / mBaseSamplerate);
 }
 

@@ -598,7 +598,7 @@ private:
 				double r = (2*i + offsetI)*invSize - 1;
 				r = (r + warp)/(1 + r*warp);
 				double arg = std::sqrt(1 - r*r);
-				data[i] = bessel0(beta*arg)*invB0;
+			data[i] = static_cast<Sample>(bessel0(beta * arg) * invB0);
 			}
 		}
 	};
@@ -629,7 +629,9 @@ private:
 			for (size_t i = 0; i < size; ++i) {
 				double r = (2*i + offsetI)*invSize - 1;
 				r = (r + warp)/(1 + r*warp);
-				data[i] = norm*(gaussian(r) - offsetScale*(gaussian(r - 2) + gaussian(r + 2)));
+			data[i] = static_cast<Sample>(
+				norm * (gaussian(r) - offsetScale *
+				(gaussian(r - 2) + gaussian(r + 2))));
 			}
 		}
 	};
@@ -643,7 +645,7 @@ private:
 			}
 			double factor = 1/std::sqrt(sum2);
 			for (size_t index = i; index < windowLength; index += interval) {
-				data[index] *= factor;
+			data[index] *= static_cast<Sample>(factor);
 			}
 		}
 	}

@@ -231,12 +231,95 @@ void main() {
     expect(notifier.state.loadingState, LicenseLoadingState.unlicensed);
   });
 
-  test('LicenseNotifier pasa a clockError ante ClockFailure sin degradar a unlicensed', () async {
+  test('clock set backwards yields clockError on startup and in sync()', () async {
+    // 1. Al inicio de la aplicación
     final clockManager = _MockClockFailureManager();
     final clockNotifier = LicenseNotifier(clockManager);
     await Future<void>.delayed(Duration.zero);
     expect(clockNotifier.state.loadingState, LicenseLoadingState.clockError);
     expect(clockNotifier.state.error, contains('reloj'));
+
+    // 2. Durante sync() en segundo plano
+    final completer = Completer<Result<LicenseInfo>>();
+    final syncNotifier = LicenseNotifier(clockManager, preloaded: completer.future);
+    final validInfo = LicenseInfo(
+      status: LicenseStatus.active,
+      licenseKey: 'SPP3.TEST.VALID',
+      deviceId: '1111-2222-3333-4444',
+      activatedAt: DateTime.now(),
+      expiresAt: DateTime.now().add(const Duration(days: 365)),
+      remainingOfflineDays: 30,
+    );
+    completer.complete(Right(validInfo));
+    await Future<void>.delayed(Duration.zero);
+    expect(syncNotifier.state.loadingState, LicenseLoadingState.licensed);
+
+    // Al ejecutarse sync() con retroceso de reloj, pasa a clockError
+    await syncNotifier.sync(force: true);
+    expect(syncNotifier.state.loadingState, LicenseLoadingState.clockError);
+    expect(syncNotifier.state.error, contains('reloj'));
+  });
+
+  group('PUNTO 2: Manejo de errores transitorios de almacenamiento y sync', () {
+    test('Fallo transitorio de almacenamiento al inicio pasa a error (reintentable), no a unlicensed', () async {
+      final transientManager = _MockTransientFailureManager();
+      final notifier = LicenseNotifier(transientManager);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(notifier.state.loadingState, LicenseLoadingState.error);
+      expect(notifier.state.error, contains('DPAPI / Keystore'));
+    });
+
+    test('sync() con fallo transitorio (SecurityFailure) MANTIENE el estado licensed sin echar al usuario', () async {
+      final completer = Completer<Result<LicenseInfo>>();
+      final transientManager = _MockTransientFailureManager();
+      final notifier = LicenseNotifier(transientManager, preloaded: completer.future);
+
+      final info = LicenseInfo(
+        status: LicenseStatus.active,
+        licenseKey: 'SPP3.TEST.VALID',
+        deviceId: '1111-2222-3333-4444',
+        activatedAt: DateTime.now(),
+        expiresAt: DateTime.now().add(const Duration(days: 365)),
+        remainingOfflineDays: 30,
+      );
+      completer.complete(Right(info));
+      await Future<void>.delayed(Duration.zero);
+      expect(notifier.state.loadingState, LicenseLoadingState.licensed);
+
+      // sync() forzado contra el manager con fallo transitorio
+      await notifier.sync(force: true);
+
+      // El usuario sigue en licensed
+      expect(notifier.state.loadingState, LicenseLoadingState.licensed);
+      expect(notifier.state.status, LicenseStatus.active);
+      expect(notifier.state.licenseKey, 'SPP3.TEST.VALID');
+    });
+
+    test('sync() con fallo definitivo (LicenseFailure) degrada correctamente a unlicensed', () async {
+      final completer = Completer<Result<LicenseInfo>>();
+      final revokedManager = _MockRevokedLicenseManager();
+      final notifier = LicenseNotifier(revokedManager, preloaded: completer.future);
+
+      final info = LicenseInfo(
+        status: LicenseStatus.active,
+        licenseKey: 'SPP3.TEST.VALID',
+        deviceId: '1111-2222-3333-4444',
+        activatedAt: DateTime.now(),
+        expiresAt: DateTime.now().add(const Duration(days: 365)),
+        remainingOfflineDays: 30,
+      );
+      completer.complete(Right(info));
+      await Future<void>.delayed(Duration.zero);
+      expect(notifier.state.loadingState, LicenseLoadingState.licensed);
+
+      // sync() forzado contra el manager con licencia revocada / inexistente
+      await notifier.sync(force: true);
+
+      // Degrada a unlicensed
+      expect(notifier.state.loadingState, LicenseLoadingState.unlicensed);
+      expect(notifier.state.error, contains('HWID mismatch o clave revocada'));
+    });
   });
 }
 
@@ -247,5 +330,25 @@ class _MockClockFailureManager extends LicenseManager {
   @override
   Future<Result<LicenseInfo>> validateLicense() async {
     return const Left(ClockFailure('La fecha y hora del sistema retrocedió de forma anormal. Ajusta tu reloj a la hora y fecha real de hoy e inténtalo de nuevo.'));
+  }
+}
+
+class _MockTransientFailureManager extends LicenseManager {
+  _MockTransientFailureManager()
+      : super(secureStorage: _FakeSecurityPort(), fingerprint: _FakeFingerprint());
+
+  @override
+  Future<Result<LicenseInfo>> validateLicense() async {
+    return const Left(SecurityFailure('Error temporal de DPAPI / Keystore al desencriptar el almacenamiento'));
+  }
+}
+
+class _MockRevokedLicenseManager extends LicenseManager {
+  _MockRevokedLicenseManager()
+      : super(secureStorage: _FakeSecurityPort(), fingerprint: _FakeFingerprint());
+
+  @override
+  Future<Result<LicenseInfo>> validateLicense() async {
+    return const Left(LicenseFailure('HWID mismatch o clave revocada definitivamente'));
   }
 }
