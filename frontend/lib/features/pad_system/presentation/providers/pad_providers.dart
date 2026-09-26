@@ -9,6 +9,8 @@ import '../../../../core/providers/core_providers.dart';
 import '../../../../core/audio/trigger_mode.dart';
 import '../../../../core/audio/pad_trigger_resolver.dart';
 import '../../../../core/audio/audio_load_request.dart';
+import '../../../../core/audio/audio_engine_port.dart';
+import '../../../../core/platform/device_tier.dart';
 import '../../../../core/services/filesystem_sync_service.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../data/models/pad_model.dart';
@@ -181,6 +183,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
 
   final int arg;
   StreamSubscription? _sub;
+  Timer? _preloadTimer;
 
   @override
   Future<List<PadEntity>> build() async {
@@ -207,8 +210,10 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       _setPadState(padId, PadState.idle);
     });
 
+    _preloadTimer?.cancel();
     ref.onDispose(() {
       _sub?.cancel();
+      _preloadTimer?.cancel();
     });
 
     // Precargar audios en segundo plano a través de la cola con concurrencia controlada.
@@ -222,7 +227,30 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
             needsRandomAccess: pad.needsRandomAccess,
           ),
     ];
-    if (toLoad.isNotEmpty) unawaited(audioEngine.preloadAll(toLoad));
+
+    void scheduleIdlePreload() {
+      _preloadTimer?.cancel();
+      _preloadTimer = Timer(const Duration(seconds: 1), () {
+        unawaited(
+          maybePreloadNextPages(
+            currentEntities: entities,
+            currentPageIndex: arg,
+            workspace: workspace,
+            audioEngine: audioEngine,
+          ),
+        );
+      });
+    }
+
+    if (toLoad.isNotEmpty) {
+      unawaited(
+        audioEngine.preloadAll(toLoad).then((_) {
+          scheduleIdlePreload();
+        }),
+      );
+    } else {
+      scheduleIdlePreload();
+    }
 
     return entities;
   }
@@ -259,6 +287,137 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       loopPoint: Duration(milliseconds: m.loopPointMs),
       backgroundImagePath: null,
     );
+  }
+
+  /// Precarga en segundo plano (cola ociosa / idle) los audios de páginas a las
+  /// que el DJ podría navegar a continuación (carpetas visibles y siguiente página raíz).
+  ///
+  /// Restricciones del diseño (T27):
+  /// - Solo en perfil de hardware 'high' (DeviceTierDetector.current == DeviceTier.high).
+  /// - Protección de caché: si el uso actual supera el 70% del presupuesto, no precarga.
+  /// - Máximo 32 pads por precarga.
+  /// - Respeta las reglas de memoria/disco (AudioLoadRequest.needsRandomAccess).
+  static Future<void> maybePreloadNextPages({
+    required List<PadEntity> currentEntities,
+    required int currentPageIndex,
+    required WorkspaceModel workspace,
+    required AudioEnginePort audioEngine,
+    int maxPads = 32,
+  }) async {
+    if (DeviceTierDetector.current != DeviceTier.high) return;
+    if (audioEngine.cacheUsageRatio > 0.70) return;
+
+    final requests = await collectNextPagePreloadRequests(
+      currentEntities: currentEntities,
+      currentPageIndex: currentPageIndex,
+      workspace: workspace,
+      audioEngine: audioEngine,
+      maxPads: maxPads,
+    );
+
+    if (requests.isNotEmpty) {
+      audioEngine.preloadIdle(requests);
+    }
+  }
+
+  static Future<List<AudioLoadRequest>> collectNextPagePreloadRequests({
+    required List<PadEntity> currentEntities,
+    required int currentPageIndex,
+    required WorkspaceModel workspace,
+    required AudioEnginePort audioEngine,
+    int maxPads = 32,
+  }) async {
+    final folderDestinationIndexes = <int>[];
+    for (final pad in currentEntities) {
+      if (pad.type == PadType.folder && pad.targetPageIndex != null) {
+        if (!folderDestinationIndexes.contains(pad.targetPageIndex!)) {
+          folderDestinationIndexes.add(pad.targetPageIndex!);
+        }
+      }
+    }
+
+    if (workspace.id != Isar.autoIncrement) {
+      try {
+        await workspace.pages.load();
+      } catch (_) {}
+    }
+    final allPages = workspace.pages.toList();
+
+    final rootPages = allPages.where((p) => p.parentPageId == null).toList()
+      ..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
+
+    int? nextRootIndex;
+    final currentPage =
+        allPages.where((p) => p.pageIndex == currentPageIndex).firstOrNull;
+
+    if (currentPage != null && currentPage.parentPageId == null) {
+      // Estamos en una página raíz: buscamos la siguiente página raíz por pageIndex
+      nextRootIndex = rootPages
+          .where((p) => p.pageIndex > currentPageIndex)
+          .firstOrNull
+          ?.pageIndex;
+    } else if (currentPage != null && currentPage.parentPageId != null) {
+      // Estamos dentro de una subcarpeta: localizamos la raíz de origen
+      var current = currentPage;
+      while (current.parentPageId != null) {
+        final parent =
+            allPages.where((p) => p.id == current.parentPageId).firstOrNull;
+        if (parent == null) break;
+        current = parent;
+      }
+      nextRootIndex = rootPages
+          .where((p) => p.pageIndex > current.pageIndex)
+          .firstOrNull
+          ?.pageIndex;
+    }
+
+    final targetPageIndexes = <int>[
+      ...folderDestinationIndexes,
+      if (nextRootIndex != null &&
+          !folderDestinationIndexes.contains(nextRootIndex))
+        nextRootIndex,
+    ];
+
+    final requests = <AudioLoadRequest>[];
+
+    for (final pageIndex in targetPageIndexes) {
+      if (requests.length >= maxPads) break;
+
+      final page = allPages.where((p) => p.pageIndex == pageIndex).firstOrNull;
+      if (page == null) continue;
+
+      if (page.id != Isar.autoIncrement) {
+        try {
+          await page.pads.load();
+        } catch (_) {}
+      }
+      final pads = page.pads.toList()
+        ..sort((a, b) => a.padId.compareTo(b.padId));
+
+      for (final pad in pads) {
+        if (requests.length >= maxPads) break;
+
+        final samplePath = pad.samplePath;
+        if (samplePath == null || samplePath.trim().isEmpty) continue;
+
+        final padIdStr = pad.id.toString();
+        if (audioEngine.isLoaded(padIdStr)) continue;
+
+        final needsRandomAccess = (pad.reverse == true) ||
+            (pad.startPointMs > 0) ||
+            (pad.loopPointMs > 0);
+
+        requests.add(
+          AudioLoadRequest(
+            id: padIdStr,
+            path: samplePath,
+            needsRandomAccess: needsRandomAccess,
+          ),
+        );
+      }
+    }
+
+    return requests;
   }
 
   Future<void> createNewPad() => LibraryWriteLock.run(() async {

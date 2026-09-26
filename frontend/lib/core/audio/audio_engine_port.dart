@@ -48,6 +48,13 @@ abstract class AudioEnginePort {
   /// Sustituye la cola de precarga con [requests] (List<AudioLoadRequest> o Map<String, String>)
   /// y no espera a que termine. Descarta los audios pendientes de la precarga anterior.
   Future<void> preloadAll(dynamic requests);
+
+  /// Encola audios en la cola de baja prioridad (idle), que solo se ejecutan
+  /// cuando la cola primaria está vacía y la concurrencia activa es 0.
+  void preloadIdle(dynamic requests);
+
+  /// Proporción actual de memoria de audio en caché respecto al presupuesto configurado (0.0 a 1.0+).
+  double get cacheUsageRatio;
   void play(
     String id,
     TriggerMode mode, {

@@ -172,8 +172,22 @@ class MockAudioEngine implements AudioEnginePort {
   @override
   Future<void> loadAudio(String id, String assetPath, {bool needsRandomAccess = false}) async {}
 
+  double mockCacheUsageRatio = 0.0;
+  final List<dynamic> preloadIdleCalls = [];
+  final List<dynamic> preloadAllCalls = [];
+
   @override
-  Future<void> preloadAll(dynamic requests) async {}
+  Future<void> preloadAll(dynamic requests) async {
+    preloadAllCalls.add(requests);
+  }
+
+  @override
+  void preloadIdle(dynamic requests) {
+    preloadIdleCalls.add(requests);
+  }
+
+  @override
+  double get cacheUsageRatio => mockCacheUsageRatio;
 
   @override
   void play(

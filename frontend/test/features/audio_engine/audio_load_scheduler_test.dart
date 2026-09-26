@@ -171,5 +171,116 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(scheduler.isIdle, isTrue);
     });
+
+    test('idle queue does not process while primary queue has items', () async {
+      final completers = <String, Completer<void>>{};
+      final loadedIds = <String>[];
+
+      final scheduler = AudioLoadScheduler(
+        maxConcurrent: 2,
+        load: (AudioLoadRequest req) {
+          loadedIds.add(req.id);
+          final c = Completer<void>();
+          completers[req.id] = c;
+          return c.future;
+        },
+      );
+
+      // Enqueue primary items
+      scheduler.replaceQueue([
+        const AudioLoadRequest(id: 'pri1', path: 'path1'),
+        const AudioLoadRequest(id: 'pri2', path: 'path2'),
+      ]);
+
+      // Enqueue idle items
+      scheduler.enqueueIdle([
+        const AudioLoadRequest(id: 'idle1', path: 'pathIdle1'),
+        const AudioLoadRequest(id: 'idle2', path: 'pathIdle2'),
+      ]);
+
+      expect(loadedIds, equals(['pri1', 'pri2']));
+      expect(scheduler.idlePendingCount, equals(2));
+
+      // Complete pri1: concurrency drops to 1, but pri2 is still running
+      completers['pri1']!.complete();
+      await Future<void>.delayed(Duration.zero);
+
+      // Idle items should NOT start because runningCount is 1 (> 0)
+      expect(loadedIds, equals(['pri1', 'pri2']));
+      expect(scheduler.idlePendingCount, equals(2));
+
+      // Complete pri2: now primary is empty and runningCount is 0
+      completers['pri2']!.complete();
+      await Future<void>.delayed(Duration.zero);
+
+      // Now idle1 should start!
+      expect(loadedIds, equals(['pri1', 'pri2', 'idle1']));
+      expect(scheduler.idlePendingCount, equals(1));
+      expect(scheduler.runningCount, equals(1));
+
+      // Complete idle1: now idle2 should start
+      completers['idle1']!.complete();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(loadedIds, equals(['pri1', 'pri2', 'idle1', 'idle2']));
+      expect(scheduler.idlePendingCount, equals(0));
+
+      completers['idle2']!.complete();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(scheduler.isIdle, isTrue);
+    });
+
+    test('replaceQueue clears both primary and idle queues', () async {
+      final completers = <String, Completer<void>>{};
+      final loadedIds = <String>[];
+
+      final scheduler = AudioLoadScheduler(
+        maxConcurrent: 1,
+        load: (AudioLoadRequest req) {
+          loadedIds.add(req.id);
+          final c = Completer<void>();
+          completers[req.id] = c;
+          return c.future;
+        },
+      );
+
+      scheduler.replaceQueue([
+        const AudioLoadRequest(id: 'p1', path: 'path1'),
+        const AudioLoadRequest(id: 'p2', path: 'path2'),
+      ]);
+      scheduler.enqueueIdle([
+        const AudioLoadRequest(id: 'i1', path: 'pathI1'),
+        const AudioLoadRequest(id: 'i2', path: 'pathI2'),
+      ]);
+
+      expect(loadedIds, equals(['p1']));
+      expect(scheduler.pendingCount, equals(1)); // p2
+      expect(scheduler.idlePendingCount, equals(2)); // i1, i2
+
+      // Switch page before p1 finishes
+      scheduler.replaceQueue([
+        const AudioLoadRequest(id: 'newPagePad', path: 'pathNew'),
+      ]);
+
+      // Both old pending (p2) and idle (i1, i2) should be cleared
+      expect(scheduler.pendingCount, equals(1)); // newPagePad
+      expect(scheduler.idlePendingCount, equals(0));
+
+      // Finish p1
+      completers['p1']!.complete();
+      await Future<void>.delayed(Duration.zero);
+
+      // newPagePad should run, but p2, i1, i2 should NEVER run
+      expect(loadedIds, equals(['p1', 'newPagePad']));
+      expect(loadedIds.contains('p2'), isFalse);
+      expect(loadedIds.contains('i1'), isFalse);
+      expect(loadedIds.contains('i2'), isFalse);
+
+      completers['newPagePad']!.complete();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(scheduler.isIdle, isTrue);
+    });
   });
 }

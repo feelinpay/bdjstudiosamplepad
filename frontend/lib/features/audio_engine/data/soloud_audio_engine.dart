@@ -835,8 +835,21 @@ class SoLoudAudioEngine implements AudioEnginePort {
   }
 
   @override
-  Future<void> preloadAll(dynamic requests) async {
-    _preloadScheduler.replaceQueue(requests);
+  Future<void> preloadAll(dynamic requests) {
+    return _preloadScheduler.replaceQueue(requests);
+  }
+
+  @override
+  void preloadIdle(dynamic requests) {
+    _preloadScheduler.enqueueIdle(requests);
+  }
+
+  @override
+  double get cacheUsageRatio {
+    if (!_cacheReady) return 0.0;
+    final budget = _effectiveCacheBudget();
+    if (budget <= 0) return 0.0;
+    return _loadedSounds.totalWeight / budget;
   }
 
   @override
