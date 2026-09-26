@@ -79,4 +79,26 @@ void main() {
       resolvedWithPrefix,
     );
   });
+
+  test('una copia que falla no deja archivo reservado de 0 bytes ni archivo huérfano', () async {
+    await AppStorageService.initialize();
+    final mediaDir = await AppStorageService.mediaDirectory();
+
+    // Intentar importar un archivo inexistente
+    final nonExistentPath = p.join(tempRoot.path, 'no_existe_archivo.wav');
+    final result = await LocalAudioStorageService.importAudioFile(
+      nonExistentPath,
+      namespace: 'TestNamespace',
+    );
+
+    expect(result, equals(nonExistentPath));
+
+    if (await mediaDir.exists()) {
+      final mediaFiles = await mediaDir
+          .list(recursive: true)
+          .where((e) => e is File)
+          .toList();
+      expect(mediaFiles, isEmpty, reason: 'No deben quedar archivos placeholder tras fallo');
+    }
+  });
 }

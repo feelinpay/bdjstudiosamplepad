@@ -463,10 +463,16 @@ class PadAddActions {
 
       final notifier = ref.read(padPageProvider(pageIndex).notifier);
 
-      final localPath = await LocalAudioStorageService.importAudioFile(f.path!);
-      final name = f.name.replaceAll(RegExp(r'\.[^.]+$'), '');
+      FilesystemSyncService.suspend();
+      try {
+        final localPath = await LocalAudioStorageService.importAudioFile(f.path!);
+        final name = f.name.replaceAll(RegExp(r'\.[^.]+$'), '');
 
-      await notifier.assignSampleToPad(padId, localPath, name);
+        await notifier.assignSampleToPad(padId, localPath, name);
+      } finally {
+        final isar = await ref.read(isarProvider.future);
+        await FilesystemSyncService.resume(isar);
+      }
     });
   }
 

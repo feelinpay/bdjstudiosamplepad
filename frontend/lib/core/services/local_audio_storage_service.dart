@@ -204,6 +204,12 @@ class LocalAudioStorageService {
         final bytes = await File(resolvedOriginal).readAsBytes();
         await File(newPath).writeAsBytes(bytes);
       } catch (err) {
+        try {
+          final placeholder = File(newPath);
+          if (await placeholder.exists()) {
+            await placeholder.delete();
+          }
+        } catch (_) {}
         return originalPath;
       }
     }
@@ -231,7 +237,17 @@ class LocalAudioStorageService {
     );
     final newPath = p.join(audiosDir.path, relativePath);
     await Directory(p.dirname(newPath)).create(recursive: true);
-    await File(newPath).writeAsBytes(bytes);
+    try {
+      await File(newPath).writeAsBytes(bytes);
+    } catch (e) {
+      try {
+        final placeholder = File(newPath);
+        if (await placeholder.exists()) {
+          await placeholder.delete();
+        }
+      } catch (_) {}
+      rethrow;
+    }
 
     return '$prefix$relativePath';
   }
