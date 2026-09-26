@@ -12,6 +12,7 @@ import 'core/providers/database_provider.dart';
 import 'core/providers/audio_providers.dart';
 import 'core/providers/library_sync_provider.dart';
 import 'core/services/filesystem_sync_service.dart';
+import 'core/audio/audio_engine_port.dart';
 import 'core/services/app_storage_service.dart';
 import 'core/platform/device_tier.dart';
 import 'core/platform/storage_permission_gate.dart';

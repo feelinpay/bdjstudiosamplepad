@@ -94,9 +94,6 @@ class LocalAudioStorageService {
           .where((s) => s.isNotEmpty);
       relDir = p.joinAll(segments);
     }
-    var fileName = '$cleanBase$ext';
-    var relPath = relDir.isEmpty ? fileName : p.join(relDir, fileName);
-    var fullPath = p.join(baseDir.path, relPath);
 
     var counter = 0;
     while (true) {
