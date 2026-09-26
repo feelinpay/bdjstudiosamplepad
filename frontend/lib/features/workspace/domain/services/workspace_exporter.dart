@@ -33,9 +33,8 @@ class WorkspaceExporter {
     await mediaDir.create(recursive: true);
     var exportPath = '${work.path}/export.sppworkspace';
 
-    var pages = await isar.pageModels
+    var pages = await workspace.pages
         .filter()
-        .workspace((q) => q.idEqualTo(workspace.id))
         .findAll();
     final pageById = {for (final page in pages) page.id: page};
     pages.sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
@@ -59,9 +58,8 @@ class WorkspaceExporter {
     final pagesWithPads = <(PageModel, List<PadModel>)>[];
     var totalPads = 0;
     for (var page in pages) {
-      var pads = await isar.padModels
+      var pads = await page.pads
           .filter()
-          .page((q) => q.idEqualTo(page.id))
           .findAll();
       pagesWithPads.add((page, pads));
       totalPads += pads.length;

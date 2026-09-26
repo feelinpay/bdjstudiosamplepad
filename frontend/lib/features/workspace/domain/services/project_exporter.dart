@@ -13,8 +13,6 @@ import '../../../../core/services/local_audio_storage_service.dart';
 import '../../../../core/utils/zip_utils.dart';
 import '../../../macros/data/models/macro_model.dart';
 import '../../../midi/data/models/midi_mapping_model.dart';
-import '../../../pad_system/data/models/pad_model.dart';
-import '../../data/models/page_model.dart';
 import '../../data/models/workspace_model.dart';
 
 /// Exportador de proyecto completo (v2: Formato bdj-studio-sample-pad-project).
@@ -86,9 +84,8 @@ class ProjectExporter {
     final mediaFilesToCopy = <(File, String)>[]; // (sourceFile, targetName)
 
     for (final ws in workspaces) {
-      final pages = await isar.pageModels
+      final pages = await ws.pages
           .filter()
-          .workspace((q) => q.idEqualTo(ws.id))
           .findAll();
       final pageById = {for (final page in pages) page.id: page};
       pages.sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
@@ -96,9 +93,8 @@ class ProjectExporter {
       final padsMeta = <Map<String, dynamic>>[];
 
       for (final page in pages) {
-        final pads = await isar.padModels
+        final pads = await page.pads
             .filter()
-            .page((q) => q.idEqualTo(page.id))
             .findAll();
 
         for (final pad in pads) {

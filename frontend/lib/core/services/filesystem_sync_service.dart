@@ -176,14 +176,13 @@ class FilesystemSyncService {
   /// carpeta física del workspace.
   static Future<bool> _folderContentExists(
     Isar isar,
-    int workspaceId,
+    WorkspaceModel workspace,
     PadModel folderPad,
   ) async {
     if (folderPad.targetPageIndex == null) return false;
 
-    final rootPage = await isar.pageModels
+    final rootPage = await workspace.pages
         .filter()
-        .workspace((w) => w.idEqualTo(workspaceId))
         .pageIndexEqualTo(folderPad.targetPageIndex!)
         .findFirst();
     if (rootPage == null) return false;
@@ -205,9 +204,8 @@ class FilesystemSyncService {
             // No se puede resolver la ruta: no lo tratamos como contenido vivo.
           }
         } else if (pad.padTypeIndex == 1 && pad.targetPageIndex != null) {
-          final childPage = await isar.pageModels
+          final childPage = await workspace.pages
               .filter()
-              .workspace((w) => w.idEqualTo(workspaceId))
               .pageIndexEqualTo(pad.targetPageIndex!)
               .findFirst();
           if (childPage != null) pagesToVisit.add(childPage);
@@ -227,9 +225,8 @@ class FilesystemSyncService {
     Set<String> visitedPaths,
   ) async {
     int addedCount = 0;
-    final page = await isar.pageModels
+    final page = await workspace.pages
         .filter()
-        .workspace((w) => w.idEqualTo(workspace.id))
         .pageIndexEqualTo(pageIndex)
         .findFirst();
 
@@ -304,7 +301,7 @@ class FilesystemSyncService {
 
         if (reusedTargetIndex == null) {
           // Nueva carpeta creada por el usuario externamente -> se enumera al final
-          targetHiddenIndex = await _getNextHiddenIndex(isar, workspace.id);
+          targetHiddenIndex = await _getNextHiddenIndex(workspace);
           maxPadId++;
           usedTargetPageIndexes.add(targetHiddenIndex);
 
@@ -417,20 +414,19 @@ class FilesystemSyncService {
         if (!diskChildDirs.contains(pad.label.trim().toLowerCase())) {
           final stillHasContent = await _folderContentExists(
             isar,
-            workspace.id,
+            workspace,
             pad,
           );
           if (stillHasContent) continue;
           // La carpeta fue eliminada externamente → limpiar el pad y su página oculta
           await isar.writeTxn(() async {
             if (pad.targetPageIndex != null) {
-              final hiddenPage = await isar.pageModels
+              final hiddenPage = await workspace.pages
                   .filter()
-                  .workspace((w) => w.idEqualTo(workspace.id))
                   .pageIndexEqualTo(pad.targetPageIndex!)
                   .findFirst();
               if (hiddenPage != null) {
-                await _deletePageAndChildren(isar, workspace.id, hiddenPage);
+                await _deletePageAndChildren(isar, workspace, hiddenPage);
               }
             }
             await isar.padModels.delete(pad.id);
@@ -463,18 +459,17 @@ class FilesystemSyncService {
   /// Elimina recursivamente una página oculta y todos sus hijos (subpáginas y pads).
   static Future<void> _deletePageAndChildren(
     Isar isar,
-    int workspaceId,
+    WorkspaceModel workspace,
     PageModel page,
   ) async {
     // Buscar subpáginas que tienen esta página como padre
-    final childPages = await isar.pageModels
+    final childPages = await workspace.pages
         .filter()
-        .workspace((w) => w.idEqualTo(workspaceId))
         .parentPageIdEqualTo(page.id)
         .findAll();
 
     for (final childPage in childPages) {
-      await _deletePageAndChildren(isar, workspaceId, childPage);
+      await _deletePageAndChildren(isar, workspace, childPage);
     }
 
     // Eliminar todos los pads de esta página
@@ -485,13 +480,14 @@ class FilesystemSyncService {
     await isar.pageModels.delete(page.id);
   }
 
-  static Future<int> _getNextHiddenIndex(Isar isar, int workspaceId) async {
-    final pages = await isar.pageModels
+  static Future<int> _getNextHiddenIndex(WorkspaceModel workspace) async {
+    final hidden = await workspace.pages
         .filter()
-        .workspace((w) => w.idEqualTo(workspaceId))
+        .pageIndexGreaterThan(999)
         .findAll();
-    final hidden = pages.map((p) => p.pageIndex).where((i) => i >= 1000);
-    return hidden.isEmpty ? 1000 : hidden.reduce((a, b) => a > b ? a : b) + 1;
+    return hidden.isEmpty
+        ? 1000
+        : hidden.map((p) => p.pageIndex).reduce((a, b) => a > b ? a : b) + 1;
   }
 
    /// Fase 2: Watcher en vivo con bajo consumo de recursos (solo Desktop).

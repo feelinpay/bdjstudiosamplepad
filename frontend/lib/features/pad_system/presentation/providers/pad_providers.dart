@@ -184,23 +184,18 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       }
     }
 
-    final isar = await ref.read(isarProvider.future);
     final workspace = await ref.watch(currentWorkspaceProvider.future);
     if (workspace == null) return [];
 
-    // Consulta indexada ultra-rápida en Isar DB (1-2ms)
-    final page = await isar.pageModels
+    final page = await workspace.pages
         .filter()
-        .workspace((q) => q.idEqualTo(workspace.id))
-        .and()
         .pageIndexEqualTo(arg)
         .findFirst();
 
     if (page == null) return [];
 
-    final padModels = await isar.padModels
+    final padModels = await page.pads
         .filter()
-        .page((q) => q.idEqualTo(page.id))
         .sortByPadId()
         .findAll();
 
@@ -276,21 +271,15 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     var workspace = await ref.read(currentWorkspaceProvider.future);
     if (workspace == null) return;
 
-    await workspace.pages.load();
-    PageModel? page;
-    for (final candidate in workspace.pages) {
-      if (candidate.pageIndex == arg) {
-        page = candidate;
-        break;
-      }
-    }
+    final page = await workspace.pages
+        .filter()
+        .pageIndexEqualTo(arg)
+        .findFirst();
     if (page == null) return;
-    await page.pads.load();
     final targetPage = page;
 
-    final existingPads = await isar.padModels
+    final existingPads = await targetPage.pads
         .filter()
-        .page((q) => q.idEqualTo(targetPage.id))
         .findAll();
     int newId = 0;
     if (existingPads.isNotEmpty) {
@@ -665,10 +654,11 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
   Future<PageModel?> _pageForIndex(int index) async {
     var workspace = await ref.read(currentWorkspaceProvider.future);
     if (workspace == null) return null;
-    await workspace.pages.load();
-    for (var pg in workspace.pages) {
-      if (pg.pageIndex == index) return pg;
-    }
+    final found = await workspace.pages
+        .filter()
+        .pageIndexEqualTo(index)
+        .findFirst();
+    if (found != null) return found;
     return ref
         .read(workspaceRepositoryProvider)
         .createPage(workspace.id, index);
@@ -677,11 +667,11 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
   Future<int> _nextHiddenPageIndex() async {
     var workspace = await ref.read(currentWorkspaceProvider.future);
     if (workspace == null) return 1000;
-    await workspace.pages.load();
-    var hidden = workspace.pages
-        .map((p) => p.pageIndex)
-        .where((i) => i >= 1000);
-    return hidden.isEmpty ? 1000 : hidden.reduce((a, b) => a > b ? a : b) + 1;
+    final hidden = await workspace.pages
+        .filter()
+        .pageIndexGreaterThan(999)
+        .findAll();
+    return hidden.isEmpty ? 1000 : hidden.map((p) => p.pageIndex).reduce((a, b) => a > b ? a : b) + 1;
   }
 
   PadModel _copyModel(
@@ -754,10 +744,9 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
 
     await isar.writeTxn(() async {
       if (newTarget != null) {
-        final sourceChildPage = await isar.pageModels
+        final sourceChildPage = await workspace.pages
             .filter()
             .pageIndexEqualTo(sourceModel.targetPageIndex!)
-            .workspace((query) => query.idEqualTo(workspace.id))
             .findFirst();
         if (sourceChildPage != null) {
           // Duplicar contenido de la carpeta (solo pads, no sub-páginas)
@@ -814,9 +803,8 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     var colors = AppColors.audioPadPalette;
 
     await isar.writeTxn(() async {
-      final existingPads = await isar.padModels
+      final existingPads = await page.pads
           .filter()
-          .page((q) => q.idEqualTo(page.id))
           .findAll();
       var nextPadId = existingPads.isEmpty
           ? 0
@@ -870,9 +858,8 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
       await isar.pageModels.put(hidden);
       await hidden.workspace.save();
 
-      final existingPads = await isar.padModels
+      final existingPads = await page.pads
           .filter()
-          .page((q) => q.idEqualTo(page.id))
           .findAll();
       var nextPadId = existingPads.isEmpty
           ? 0
@@ -955,7 +942,8 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
   }
 
   /// Importa una carpeta completa (con sus pads y audios) desde un archivo.
-  Future<void> importFolder(ImportedFolder data) async {
+  Future<void> importFolder(ImportedFolder data) =>
+      LibraryWriteLock.run(() async {
     var isar = await ref.read(isarProvider.future);
     var page = await _pageForIndex(arg);
     var workspace = await ref.read(currentWorkspaceProvider.future);
@@ -1004,7 +992,7 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     // Localized update: append the new folder pad only.
     final current = state.value ?? [];
     state = AsyncData([...current, for (final m in addedModels) _mapToEntity(m)]);
-  }
+  });
 
   Future<PageModel> _createHiddenChildPage(
     Isar isar,
@@ -1352,16 +1340,15 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     Isar isar,
     int workspaceId,
   ) async {
-    final pages = await isar.pageModels
+    final ws = await isar.workspaceModels.get(workspaceId);
+    if (ws == null) return 1000;
+    final hidden = await ws.pages
         .filter()
-        .workspace((q) => q.idEqualTo(workspaceId))
+        .pageIndexGreaterThan(999)
         .findAll();
-    final hidden = pages
-        .map((page) => page.pageIndex)
-        .where((index) => index >= 1000);
     return hidden.isEmpty
         ? 1000
-        : hidden.reduce((left, right) => left > right ? left : right) + 1;
+        : hidden.map((page) => page.pageIndex).reduce((left, right) => left > right ? left : right) + 1;
   }
 
   /// Intercambia la POSICION de dos pads (sin arrastrar): se intercambian
