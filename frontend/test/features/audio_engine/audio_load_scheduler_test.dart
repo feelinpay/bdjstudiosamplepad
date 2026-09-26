@@ -282,5 +282,41 @@ void main() {
 
       expect(scheduler.isIdle, isTrue);
     });
+
+    test('canDispatchIdle halts and clears idle queue if threshold is exceeded mid-execution', () async {
+      final completers = <String, Completer<void>>{};
+      final loadedIds = <String>[];
+      var cacheRatio = 0.50;
+
+      final scheduler = AudioLoadScheduler(
+        maxConcurrent: 1,
+        load: (AudioLoadRequest req) {
+          loadedIds.add(req.id);
+          final c = Completer<void>();
+          completers[req.id] = c;
+          return c.future;
+        },
+        canDispatchIdle: () => cacheRatio <= 0.70,
+      );
+
+      scheduler.enqueueIdle([
+        const AudioLoadRequest(id: 'i1', path: 'pathI1'),
+        const AudioLoadRequest(id: 'i2', path: 'pathI2'),
+        const AudioLoadRequest(id: 'i3', path: 'pathI3'),
+      ]);
+
+      expect(loadedIds, equals(['i1']));
+      expect(scheduler.idlePendingCount, equals(2));
+
+      // i1 completes, but cacheRatio rose to 0.75 (> 0.70)
+      cacheRatio = 0.75;
+      completers['i1']!.complete();
+      await Future<void>.delayed(Duration.zero);
+
+      // Remaining idle items (i2, i3) must be cleared and never dispatched
+      expect(loadedIds, equals(['i1']));
+      expect(scheduler.idlePendingCount, equals(0));
+      expect(scheduler.isIdle, isTrue);
+    });
   });
 }

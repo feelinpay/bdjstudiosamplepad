@@ -11,6 +11,7 @@ import '../../../../core/providers/core_providers.dart';
 import '../../../../core/audio/audio_output_device.dart';
 import '../../../../core/audio/audio_engine_port.dart';
 import '../../../../core/audio/audio_engine_state.dart';
+import '../../../../core/audio/synth_tone.dart';
 import '../../../../core/services/crash_log_service.dart';
 import '../../../../core/audio/audio_initialization_result.dart';
 import '../../../../core/providers/audio_providers.dart';
@@ -129,7 +130,53 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             title: const Text('Salida de audio'),
             subtitle: _buildAudioStatusSubtitle(engineState),
-            trailing: _buildAudioStatusIcon(engineState),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    side: BorderSide(
+                      color: engineState == AudioEngineState.ready
+                          ? Colors.cyanAccent
+                          : Colors.white24,
+                    ),
+                  ),
+                  onPressed: engineState == AudioEngineState.ready
+                      ? () {
+                          ref.read(audioEngineProvider).playSynthTone(
+                                SynthTone.sineWav(
+                                  frequency: 440,
+                                  durationMs: 300,
+                                  volume: 0.7,
+                                ),
+                              );
+                        }
+                      : null,
+                  icon: Icon(
+                    Icons.volume_up,
+                    size: 16,
+                    color: engineState == AudioEngineState.ready
+                        ? Colors.cyanAccent
+                        : Colors.white38,
+                  ),
+                  label: Text(
+                    'Probar salida',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: engineState == AudioEngineState.ready
+                          ? Colors.cyanAccent
+                          : Colors.white38,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _buildAudioStatusIcon(engineState),
+              ],
+            ),
             onTap: engineState == AudioEngineState.changingDevice
                 ? null
                 : () => _selectAudioOutput(context, ref),
@@ -403,6 +450,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (result != null && context.mounted) {
       setState(() => _audioChangeResult = result);
       final messenger = ScaffoldMessenger.of(context);
+      messenger.clearSnackBars();
       if (result.isRecoverable) {
         messenger.showSnackBar(
           SnackBar(
@@ -580,8 +628,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             );
           }
           if (engine.engineState == AudioEngineState.error) {
-            return const AudioChangeResult.failure(
-              'No se pudo cambiar la salida de audio.',
+            return AudioChangeResult.failure(
+              engine.lastErrorMessage ??
+                  'No se pudo cambiar la salida de audio.',
             );
           }
           await ref
@@ -597,8 +646,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           return const AudioChangeResult.success('Salida de audio actualizada.');
         } catch (error, st) {
           debugPrint('Audio device change failed: $error\n$st');
-          return const AudioChangeResult.failure(
-            'No se pudo cambiar la salida de audio.',
+          return AudioChangeResult.failure(
+            engine.lastErrorMessage ??
+                (error is StateError ? error.message : 'No se pudo cambiar la salida de audio.'),
           );
         }
       },

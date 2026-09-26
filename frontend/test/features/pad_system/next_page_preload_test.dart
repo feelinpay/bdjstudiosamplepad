@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:isar_community/isar.dart';
 import 'package:path/path.dart' as p;
 import 'package:bdj_studio_sample_pad/core/platform/device_tier.dart';
+import 'package:bdj_studio_sample_pad/core/audio/audio_load_request.dart';
 import 'package:bdj_studio_sample_pad/features/pad_system/domain/entities/pad_entity.dart';
 import 'package:bdj_studio_sample_pad/features/pad_system/data/models/pad_model.dart';
 import 'package:bdj_studio_sample_pad/features/pad_system/presentation/providers/pad_providers.dart';
@@ -281,7 +282,10 @@ class _FilteringMockAudioEngine extends MockAudioEngine {
   bool isLoaded(String id) => loadedIds.contains(id);
 
   @override
-  void preloadIdle(dynamic requests) {
+  String? get lastErrorMessage => delegate.lastErrorMessage;
+
+  @override
+  void preloadIdle(List<AudioLoadRequest> requests) {
     delegate.preloadIdle(requests);
   }
 }

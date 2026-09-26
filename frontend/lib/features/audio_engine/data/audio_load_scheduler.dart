@@ -16,10 +16,12 @@ class AudioLoadScheduler {
   AudioLoadScheduler({
     required this.maxConcurrent,
     required dynamic load,
+    this.canDispatchIdle,
   }) : _load = _wrapLoad(load);
 
   final int maxConcurrent;
   final Future<void> Function(AudioLoadRequest request) _load;
+  final bool Function()? canDispatchIdle;
   final _pending = LinkedHashMap<String, AudioLoadRequest>(); // id -> request, en orden
   final _idlePending = LinkedHashMap<String, AudioLoadRequest>();
   int _running = 0;
@@ -147,6 +149,10 @@ class AudioLoadScheduler {
 
     // Cola ociosa: solo ejecuta cuando la cola primaria está vacía y la concurrencia activa es 0.
     if (_pending.isEmpty && _running == 0 && _idlePending.isNotEmpty) {
+      if (canDispatchIdle != null && !canDispatchIdle!()) {
+        _idlePending.clear();
+        return;
+      }
       final id = _idlePending.keys.first;
       final request = _idlePending.remove(id)!;
       _running++;

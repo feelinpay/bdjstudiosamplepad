@@ -6,6 +6,7 @@ import 'package:bdj_studio_sample_pad/core/audio/audio_engine_state.dart';
 import 'package:bdj_studio_sample_pad/core/audio/audio_output_device.dart';
 import 'package:bdj_studio_sample_pad/core/audio/audio_initialization_result.dart';
 import 'package:bdj_studio_sample_pad/core/audio/trigger_mode.dart';
+import 'package:bdj_studio_sample_pad/core/audio/audio_load_request.dart';
 
 /// Registro de una invocación a [play] para poder hacer aserciones en tests.
 class PlayCall {
@@ -172,8 +173,11 @@ class MockAudioEngine implements AudioEnginePort {
   @override
   Future<void> loadAudio(String id, String assetPath, {bool needsRandomAccess = false}) async {}
 
+  @override
+  String? lastErrorMessage;
+
   double mockCacheUsageRatio = 0.0;
-  final List<dynamic> preloadIdleCalls = [];
+  final List<List<AudioLoadRequest>> preloadIdleCalls = [];
   final List<dynamic> preloadAllCalls = [];
 
   @override
@@ -182,7 +186,7 @@ class MockAudioEngine implements AudioEnginePort {
   }
 
   @override
-  void preloadIdle(dynamic requests) {
+  void preloadIdle(List<AudioLoadRequest> requests) {
     preloadIdleCalls.add(requests);
   }
 

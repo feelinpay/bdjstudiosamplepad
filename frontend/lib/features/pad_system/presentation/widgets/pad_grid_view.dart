@@ -170,7 +170,9 @@ class _PadCell extends ConsumerWidget {
                 .read(padPageProvider(pageIndex).notifier)
                 .swapPads(moveSource, pad.id);
             ref.read(padMoveSourceProvider.notifier).state = null;
-            ScaffoldMessenger.of(context).showSnackBar(
+            final messenger = ScaffoldMessenger.of(context);
+            messenger.clearSnackBars();
+            messenger.showSnackBar(
               const SnackBar(
                 content: Text('Pads intercambiados correctamente'),
                 duration: Duration(seconds: 2),
@@ -557,6 +559,7 @@ class _PadCell extends ConsumerWidget {
                       .read(settingsProvider)
                       .enablePadShortcuts;
                   if (!enableShortcuts) {
+                    messenger.clearSnackBars();
                     messenger.showSnackBar(
                       SnackBar(
                         content: const Text(
@@ -595,6 +598,7 @@ class _PadCell extends ConsumerWidget {
                               container.read(currentWorkspaceIdProvider) ?? 0,
                           pageIndex: container.read(currentPageIndexProvider),
                         );
+                    messenger.clearSnackBars();
                     messenger.showSnackBar(
                       const SnackBar(
                         duration: const Duration(seconds: 2),
@@ -603,6 +607,7 @@ class _PadCell extends ConsumerWidget {
                     );
                   } else {
                     container.read(keyLearnPadProvider.notifier).state = pad.id;
+                    messenger.clearSnackBars();
                     messenger.showSnackBar(
                       const SnackBar(
                         duration: const Duration(seconds: 2),
@@ -624,9 +629,11 @@ class _PadCell extends ConsumerWidget {
                   style: TextStyle(color: Colors.white),
                 ),
                 onTap: () {
+                  final messenger = ScaffoldMessenger.of(context);
                   ConcurrencyShield.safePop(ctx);
                   if (container.read(librarySyncInProgressProvider)) {
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    messenger.clearSnackBars();
+                    messenger.showSnackBar(
                       const SnackBar(
                         duration: Duration(seconds: 2),
                         content: Text(
@@ -637,7 +644,8 @@ class _PadCell extends ConsumerWidget {
                     return;
                   }
                   container.read(padMoveSourceProvider.notifier).state = pad.id;
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  messenger.clearSnackBars();
+                  messenger.showSnackBar(
                     const SnackBar(
                       duration: const Duration(seconds: 2),
                       content: Text(

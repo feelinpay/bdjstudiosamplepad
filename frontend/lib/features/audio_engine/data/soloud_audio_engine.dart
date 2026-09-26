@@ -63,6 +63,10 @@ class SoLoudAudioEngine implements AudioEnginePort {
   Timer? _disposalTimer;
 
   AudioEngineState _engineState = AudioEngineState.uninitialized;
+  String? _lastErrorMessage;
+  @override
+  String? get lastErrorMessage => _lastErrorMessage;
+
   bool _isChangingDevice = false;
   int _initAttempt = 0;
   List<PlaybackDevice>? _deviceSnapshot; // enumeración del arranque actual
@@ -76,6 +80,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
       req.path,
       needsRandomAccess: req.needsRandomAccess,
     ),
+    canDispatchIdle: () => cacheUsageRatio <= 0.70,
   );
 
   static int _calculateMaxConcurrentLoads() {
@@ -314,6 +319,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
       _soloud!.setVisualizationEnabled(_visualizationRefs > 0);
       _isInitialized = true;
       _engineState = AudioEngineState.ready;
+      _lastErrorMessage = null;
       debugPrint(
         '[AudioEngine] Engine ready. availableDevices=${devices.length} '
         'tier=${DeviceTierDetector.current}',
@@ -326,8 +332,11 @@ class SoLoudAudioEngine implements AudioEnginePort {
       if (msg.contains('No playback devices were found') ||
           e is TimeoutException) {
         _engineState = AudioEngineState.noDevice;
+        _lastErrorMessage = 'No se encontró una salida de audio disponible. '
+            'Conecta parlantes, auriculares o una interfaz de audio.';
       } else {
         _engineState = AudioEngineState.error;
+        _lastErrorMessage = _friendlyDeviceErrorMessage(msg);
       }
       if (_engineState == AudioEngineState.noDevice) {
         _initCompleter = null;
@@ -469,7 +478,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
       _engineState = AudioEngineState.error;
       return AudioInitializationResult.error(
         userMessage:
-            warningMessage ?? 'No se pudo inicializar el motor de audio.',
+            _lastErrorMessage ?? warningMessage ?? 'No se pudo inicializar el motor de audio.',
       );
     }
 
@@ -478,6 +487,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
       final selectResult = await _changeDevice(targetDeviceId, devices: devices);
       if (selectResult != null) {
         _engineState = AudioEngineState.error;
+        _lastErrorMessage = selectResult;
         return AudioInitializationResult.error(userMessage: selectResult);
       }
     }
@@ -584,6 +594,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
 
       final errorMsg = _changeDevice(safeDeviceId);
       if (errorMsg != null) {
+        _lastErrorMessage = errorMsg;
         if (errorMsg.contains('No playback devices were found')) {
           _engineState = AudioEngineState.noDevice;
         } else {
@@ -594,14 +605,31 @@ class SoLoudAudioEngine implements AudioEnginePort {
       }
 
       _engineState = AudioEngineState.ready;
+      _lastErrorMessage = null;
     } finally {
       _isChangingDevice = false;
     }
   }
 
+  static String _friendlyDeviceErrorMessage(String raw) {
+    final lower = raw.toLowerCase();
+    if (raw.contains('DEVICE_IN_USE') ||
+        raw.contains('AUDCLNT_E_DEVICE_IN_USE') ||
+        raw.contains('UNKNOWN_ERROR') ||
+        lower.contains('busy') ||
+        lower.contains('exclusive') ||
+        lower.contains('in use') ||
+        lower.contains('en uso')) {
+      return 'La salida seleccionada está en uso exclusivo por otra aplicación (p. ej. rekordbox o Serato). '
+          'Cambia esa app a ASIO, desactiva el modo exclusivo en Windows o usa otra salida.';
+    }
+    return 'No se pudo cambiar la salida de audio. Inténtalo de nuevo.';
+  }
+
   String? _changeDevice(int deviceId, {List<PlaybackDevice>? devices}) {
     if (_audioDisabled || _soloud == null) {
-      return 'No se encontró una salida de audio disponible.';
+      _lastErrorMessage = 'No se encontró una salida de audio disponible.';
+      return _lastErrorMessage;
     }
     try {
       final devList = devices ?? _soloud!.listPlaybackDevices();
@@ -613,17 +641,20 @@ class SoLoudAudioEngine implements AudioEnginePort {
       _soloud!.changeDevice(newDevice: targetDevice);
       _openedDeviceId = targetDevice.id;
       _engineState = AudioEngineState.ready;
+      _lastErrorMessage = null;
       return null;
     } catch (e, st) {
       final msg = e.toString();
       debugPrint('[AudioEngine] changeDevice($deviceId) failed: $msg\n$st');
       if (msg.contains('No playback devices were found')) {
         _engineState = AudioEngineState.noDevice;
-        return 'No se encontró una salida de audio disponible. '
+        _lastErrorMessage = 'No se encontró una salida de audio disponible. '
             'Conecta parlantes, auriculares o una interfaz de audio.';
+        return _lastErrorMessage;
       }
       _engineState = AudioEngineState.error;
-      return 'No se pudo cambiar la salida de audio. Inténtalo de nuevo.';
+      _lastErrorMessage = _friendlyDeviceErrorMessage(msg);
+      return _lastErrorMessage;
     }
   }
 
@@ -840,7 +871,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
   }
 
   @override
-  void preloadIdle(dynamic requests) {
+  void preloadIdle(List<AudioLoadRequest> requests) {
     _preloadScheduler.enqueueIdle(requests);
   }
 

@@ -3,8 +3,12 @@ import 'trigger_mode.dart';
 import 'audio_output_device.dart';
 import 'audio_engine_state.dart';
 import 'audio_initialization_result.dart';
+import 'audio_load_request.dart';
 
 abstract class AudioEnginePort {
+  /// Mensaje descriptivo del último error ocurrido en el motor de audio (si lo hubo).
+  String? get lastErrorMessage;
+
   /// Inicializa el motor de audio y restaura el dispositivo guardado.
   ///
   /// Este método es seguro de llamar múltiples veces (idempotente para
@@ -51,7 +55,7 @@ abstract class AudioEnginePort {
 
   /// Encola audios en la cola de baja prioridad (idle), que solo se ejecutan
   /// cuando la cola primaria está vacía y la concurrencia activa es 0.
-  void preloadIdle(dynamic requests);
+  void preloadIdle(List<AudioLoadRequest> requests);
 
   /// Proporción actual de memoria de audio en caché respecto al presupuesto configurado (0.0 a 1.0+).
   double get cacheUsageRatio;
