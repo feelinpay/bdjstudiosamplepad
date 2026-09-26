@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:isar_community/isar.dart';
 import 'package:path/path.dart' as p;
@@ -250,4 +251,38 @@ class WorkspaceZipImporter {
       await FilesystemSyncService.resume(isarInstance);
     }
   });
+
+  /// Importa un archivo de workspace (.sppworkspace) solicitándolo al usuario con FilePicker.
+  Future<WorkspaceModel?> importWorkspaceWithPicker({
+    void Function(int current, int total)? onProgress,
+  }) async {
+    final result = await FilePicker.pickFiles(
+      dialogTitle: 'Seleccionar archivo de workspace (.sppworkspace)',
+      type: FileType.custom,
+      allowedExtensions: const ['sppworkspace', 'zip'],
+      withReadStream: true,
+    );
+    if (result == null || result.files.isEmpty) {
+      return null;
+    }
+    final single = result.files.single;
+    final resolvedPath = await resolvePickedFilePath(
+      single,
+      workSubdir: 'workspace_import_picker',
+    );
+    if (resolvedPath == null) {
+      return null;
+    }
+
+    try {
+      return await importFromZipFile(resolvedPath, onProgress: onProgress);
+    } finally {
+      if (single.path == null) {
+        try {
+          final tempF = File(resolvedPath);
+          if (await tempF.exists()) await tempF.delete();
+        } catch (_) {}
+      }
+    }
+  }
 }

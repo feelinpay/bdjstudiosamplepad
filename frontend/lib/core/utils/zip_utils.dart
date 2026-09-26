@@ -1,6 +1,9 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:archive/archive_io.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as p;
+import '../services/app_storage_service.dart';
 
 class ZipHelperArgs {
   final String metadataPath;
@@ -48,4 +51,56 @@ Future<void> extractZipInIsolate(ExtractZipArgs args) async {
   } finally {
     await inputStream.close();
   }
+}
+
+/// Resuelve un [PlatformFile] a una ruta física en disco sin saturar la memoria RAM.
+///
+/// Si [file.path] no es nulo ni vacío, se devuelve directamente.
+/// Si [file.path] es nulo (por ejemplo, en proveedores SAF de Android),
+/// consume [file.readStream] en streaming volcándolo a un archivo temporal en
+/// [AppStorageService.workDirectory(workSubdir)].
+/// Si solo existen [file.bytes], los escribe a disco como respaldo de compatibilidad.
+Future<String?> resolvePickedFilePath(
+  PlatformFile file, {
+  String workSubdir = 'import',
+}) async {
+  if (file.path != null && file.path!.isNotEmpty) {
+    return file.path;
+  }
+  if (file.readStream != null) {
+    final work = await AppStorageService.workDirectory(workSubdir);
+    final sanitizedName = file.name.isNotEmpty
+        ? file.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        : 'import_${DateTime.now().microsecondsSinceEpoch}.zip';
+    final tempFile = File(
+      p.join(work.path, '${DateTime.now().microsecondsSinceEpoch}_$sanitizedName'),
+    );
+    final sink = tempFile.openWrite();
+    try {
+      await file.readStream!.pipe(sink);
+      return tempFile.path;
+    } catch (_) {
+      try {
+        await sink.close();
+      } catch (_) {}
+      if (await tempFile.exists()) {
+        try {
+          await tempFile.delete();
+        } catch (_) {}
+      }
+      return null;
+    }
+  }
+  if (file.bytes != null && file.bytes!.isNotEmpty) {
+    final work = await AppStorageService.workDirectory(workSubdir);
+    final sanitizedName = file.name.isNotEmpty
+        ? file.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        : 'import_${DateTime.now().microsecondsSinceEpoch}.zip';
+    final tempFile = File(
+      p.join(work.path, '${DateTime.now().microsecondsSinceEpoch}_$sanitizedName'),
+    );
+    await tempFile.writeAsBytes(file.bytes!);
+    return tempFile.path;
+  }
+  return null;
 }

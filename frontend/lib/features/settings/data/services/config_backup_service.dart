@@ -19,6 +19,7 @@ import '../../../midi/data/models/midi_mapping_model.dart';
 import '../../../macros/data/models/macro_model.dart';
 import '../../../../core/services/app_storage_service.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
+import '../../../../core/utils/zip_utils.dart';
 
 enum BackupImportMode { merge, replace }
 
@@ -215,123 +216,143 @@ class ConfigBackupService {
     var picked = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['sppbackup', 'zip'],
-      withData: true,
+      withReadStream: true,
     );
     if (picked == null || picked.files.isEmpty) {
-      picked = await FilePicker.pickFiles(type: FileType.any, withData: true);
+      picked = await FilePicker.pickFiles(
+        type: FileType.any,
+        withReadStream: true,
+      );
     }
     if (picked == null || picked.files.isEmpty) return false;
 
     final singleFile = picked.files.single;
-    Uint8List? fileBytes = singleFile.bytes;
-    if (fileBytes == null && singleFile.path != null) {
-      final sourceFile = File(singleFile.path!);
-      if (await sourceFile.exists()) {
-        fileBytes = await sourceFile.readAsBytes();
-      }
-    }
+    final zipFilePath = await resolvePickedFilePath(
+      singleFile,
+      workSubdir: 'config_backup_import',
+    );
 
-    if (fileBytes == null || fileBytes.isEmpty) {
+    if (zipFilePath == null || !await File(zipFilePath).exists()) {
       throw const FormatException(
         'No se pudo acceder a los datos del archivo de respaldo.',
       );
     }
 
-    // Descomprimir en un isolate para no congelar la UI.
-    final archive = await compute(_decodeZipIsolate, fileBytes);
-    var manifestArchiveFile = _findArchiveEntry(archive, _manifestEntry);
-    if (manifestArchiveFile == null) {
-      throw const FormatException('El respaldo no contiene un manifiesto.');
-    }
-    final manifestBytes = manifestArchiveFile.readBytes();
-    if (manifestBytes == null) {
-      throw const FormatException('No se pudo leer el manifiesto.');
-    }
-    final manifest = jsonDecode(utf8.decode(manifestBytes));
-    if (manifest is! Map<String, dynamic> ||
-        manifest['format'] != _format ||
-        manifest['version'] != _version) {
-      throw const FormatException('Formato de respaldo no compatible.');
-    }
-
     final restoreId = DateTime.now().microsecondsSinceEpoch.toString();
-    final restoredMedia = await Directory(
-      p.join(mediaRoot.path, 'restored_$restoreId'),
-    ).create(recursive: true);
-    final extractedEntries = <String, String>{};
+    final work = await AppStorageService.workDirectory('config_backup_import');
+    final stagingDir = Directory(p.join(work.path, 'staging_$restoreId'));
+    await stagingDir.create(recursive: true);
 
     try {
-      final databaseInfo = manifest['database'] as Map<String, dynamic>;
-      final databaseEntry = databaseInfo['entry'] as String;
-      final importName = 'spp_import_$restoreId';
-      final databaseFile = mode == BackupImportMode.replace
-          ? File(p.join(docs.path, _pendingDb))
-          : File(p.join(restoredMedia.path, '$importName.isar'));
-      await _extractVerified(
-        archive,
-        databaseEntry,
-        databaseFile,
-        databaseInfo,
+      // Descomprimir en streaming dentro de un isolate directamente a disco.
+      await compute(
+        extractZipInIsolate,
+        ExtractZipArgs(zipPath: zipFilePath, targetDir: stagingDir.path),
       );
 
-      final preferencesInfo = manifest['preferences'] as Map<String, dynamic>;
-      final preferencesFile = File(
-        p.join(restoredMedia.path, 'preferences.json'),
-      );
-      await _extractVerified(
-        archive,
-        preferencesInfo['entry'] as String,
-        preferencesFile,
-        preferencesInfo,
-      );
-
-      final assets = (manifest['assets'] as List<dynamic>)
-          .cast<Map<String, dynamic>>();
-      for (var index = 0; index < assets.length; index++) {
-        final info = assets[index];
-        final entry = info['entry'] as String;
-        final extension = p.extension(entry);
-        final fileName = '${index.toString().padLeft(5, '0')}$extension';
-        final target = File(p.join(restoredMedia.path, fileName));
-        await _extractVerified(archive, entry, target, info);
-        extractedEntries[entry] =
-            '${_localMediaPrefix}restored_$restoreId/$fileName';
+      final manifestFile = _findStagedFile(stagingDir, _manifestEntry);
+      if (manifestFile == null || !await manifestFile.exists()) {
+        throw const FormatException('El respaldo no contiene un manifiesto.');
       }
 
-      final pathMap = <String, String>{};
-      for (final raw in (manifest['paths'] as List<dynamic>)) {
-        final mapping = raw as Map<String, dynamic>;
-        final restored = extractedEntries[mapping['entry'] as String];
-        if (restored != null) {
-          pathMap[mapping['storedPath'] as String] = restored;
+      final manifestRaw = await manifestFile.readAsString();
+      final manifest = jsonDecode(manifestRaw);
+      if (manifest is! Map<String, dynamic> ||
+          manifest['format'] != _format ||
+          manifest['version'] != _version) {
+        throw const FormatException('Formato de respaldo no compatible.');
+      }
+
+      final restoredMedia = await Directory(
+        p.join(mediaRoot.path, 'restored_$restoreId'),
+      ).create(recursive: true);
+      final extractedEntries = <String, String>{};
+
+      try {
+        final databaseInfo = manifest['database'] as Map<String, dynamic>;
+        final databaseEntry = databaseInfo['entry'] as String;
+        final importName = 'spp_import_$restoreId';
+        final databaseFile = mode == BackupImportMode.replace
+            ? File(p.join(docs.path, _pendingDb))
+            : File(p.join(restoredMedia.path, '$importName.isar'));
+        await _verifyAndMove(
+          stagingDir,
+          databaseEntry,
+          databaseFile,
+          databaseInfo,
+        );
+
+        final preferencesInfo = manifest['preferences'] as Map<String, dynamic>;
+        final preferencesFile = File(
+          p.join(restoredMedia.path, 'preferences.json'),
+        );
+        await _verifyAndMove(
+          stagingDir,
+          preferencesInfo['entry'] as String,
+          preferencesFile,
+          preferencesInfo,
+        );
+
+        final assets = (manifest['assets'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+        for (var index = 0; index < assets.length; index++) {
+          final info = assets[index];
+          final entry = info['entry'] as String;
+          final extension = p.extension(entry);
+          final fileName = '${index.toString().padLeft(5, '0')}$extension';
+          final target = File(p.join(restoredMedia.path, fileName));
+          await _verifyAndMove(stagingDir, entry, target, info);
+          extractedEntries[entry] =
+              '${_localMediaPrefix}restored_$restoreId/$fileName';
         }
+
+        final pathMap = <String, String>{};
+        for (final raw in (manifest['paths'] as List<dynamic>)) {
+          final mapping = raw as Map<String, dynamic>;
+          final restored = extractedEntries[mapping['entry'] as String];
+          if (restored != null) {
+            pathMap[mapping['storedPath'] as String] = restored;
+          }
+        }
+        if (mode == BackupImportMode.replace) {
+          await File(
+            p.join(docs.path, _pendingPaths),
+          ).writeAsString(jsonEncode(pathMap), flush: true);
+          await _restorePreferences(preferencesFile);
+        } else {
+          await mergeDatabase(databaseFile, importName, pathMap);
+        }
+        await preferencesFile.delete();
+        if (assets.isEmpty &&
+            mode == BackupImportMode.merge &&
+            await restoredMedia.exists()) {
+          await restoredMedia.delete();
+        }
+        return true;
+      } catch (_) {
+        if (mode == BackupImportMode.replace) {
+          final pendingDb = File(p.join(docs.path, _pendingDb));
+          final pendingPaths = File(p.join(docs.path, _pendingPaths));
+          if (await pendingDb.exists()) await pendingDb.delete();
+          if (await pendingPaths.exists()) await pendingPaths.delete();
+        }
+        if (await restoredMedia.exists()) {
+          await restoredMedia.delete(recursive: true);
+        }
+        rethrow;
       }
-      if (mode == BackupImportMode.replace) {
-        await File(
-          p.join(docs.path, _pendingPaths),
-        ).writeAsString(jsonEncode(pathMap), flush: true);
-        await _restorePreferences(preferencesFile);
-      } else {
-        await mergeDatabase(databaseFile, importName, pathMap);
+    } finally {
+      if (await stagingDir.exists()) {
+        try {
+          await stagingDir.delete(recursive: true);
+        } catch (_) {}
       }
-      await preferencesFile.delete();
-      if (assets.isEmpty &&
-          mode == BackupImportMode.merge &&
-          await restoredMedia.exists()) {
-        await restoredMedia.delete();
+      if (singleFile.path == null) {
+        try {
+          final tempF = File(zipFilePath);
+          if (await tempF.exists()) await tempF.delete();
+        } catch (_) {}
       }
-      return true;
-    } catch (_) {
-      if (mode == BackupImportMode.replace) {
-        final pendingDb = File(p.join(docs.path, _pendingDb));
-        final pendingPaths = File(p.join(docs.path, _pendingPaths));
-        if (await pendingDb.exists()) await pendingDb.delete();
-        if (await pendingPaths.exists()) await pendingPaths.delete();
-      }
-      if (await restoredMedia.exists()) {
-        await restoredMedia.delete(recursive: true);
-      }
-      rethrow;
     }
   }
 
@@ -820,36 +841,34 @@ class ConfigBackupService {
     return paths;
   }
 
-  static ArchiveFile? _findArchiveEntry(Archive archive, String entryName) {
-    final direct = archive.find(entryName);
-    if (direct != null) return direct;
+  static File? _findStagedFile(Directory stagingDir, String entryName) {
+    final direct = File(p.join(stagingDir.path, entryName));
+    if (direct.existsSync()) return direct;
 
     final normalizedTarget = entryName
         .replaceAll('\\', '/')
         .replaceAll(RegExp(r'^[./\\]+'), '')
         .toLowerCase();
 
-    for (final f in archive.files) {
-      final name = f.name
+    for (final entity in stagingDir.listSync(recursive: true)) {
+      if (entity is! File) continue;
+      final rel = p
+          .relative(entity.path, from: stagingDir.path)
           .replaceAll('\\', '/')
           .replaceAll(RegExp(r'^[./\\]+'), '')
           .toLowerCase();
 
-      final isFile =
-          f.isFile || (!f.name.endsWith('/') && !f.name.endsWith('\\'));
-      if (!isFile) continue;
-
-      if (name == normalizedTarget ||
-          name.endsWith('/$normalizedTarget') ||
-          p.basename(name) == p.basename(normalizedTarget)) {
-        return f;
+      if (rel == normalizedTarget ||
+          rel.endsWith('/$normalizedTarget') ||
+          p.basename(rel) == p.basename(normalizedTarget)) {
+        return entity;
       }
     }
     return null;
   }
 
-  static Future<void> _extractVerified(
-    Archive archive,
+  static Future<void> _verifyAndMove(
+    Directory stagingDir,
     String entryName,
     File target,
     Map<String, dynamic> expected,
@@ -857,26 +876,29 @@ class ConfigBackupService {
     if (entryName.contains('..') || p.isAbsolute(entryName)) {
       throw const FormatException('Ruta insegura dentro del respaldo.');
     }
-    final entry = _findArchiveEntry(archive, entryName);
-    if (entry == null || !entry.isFile) {
+    final source = _findStagedFile(stagingDir, entryName);
+    if (source == null || !await source.exists()) {
       throw FormatException('Falta el archivo $entryName.');
     }
     final expectedSize = expected['size'] as int;
-    if (expectedSize < 0 || entry.size != expectedSize) {
+    if (expectedSize < 0 || await source.length() != expectedSize) {
       throw FormatException('El tamaño de $entryName no coincide.');
     }
-    await target.parent.create(recursive: true);
-    final output = OutputFileStream(target.path);
-    try {
-      entry.writeContent(output);
-    } finally {
-      output.closeSync();
-    }
     final expectedHash = expected['sha256'] as String;
-    if (await target.length() != expectedSize ||
-        await _fileHash(target) != expectedHash) {
-      await target.delete();
+    if (await _fileHash(source) != expectedHash) {
       throw FormatException('El archivo $entryName esta dañado.');
+    }
+    await target.parent.create(recursive: true);
+    if (await target.exists()) {
+      await target.delete();
+    }
+    try {
+      await source.rename(target.path);
+    } catch (_) {
+      await source.copy(target.path);
+      try {
+        await source.delete();
+      } catch (_) {}
     }
   }
 
@@ -903,9 +925,4 @@ class ConfigBackupService {
     final digest = await sha256.bind(file.openRead()).first;
     return digest.toString();
   }
-}
-
-/// Funcion top-level para ejecutar la descompresion ZIP en un isolate.
-Archive _decodeZipIsolate(Uint8List bytes) {
-  return ZipDecoder().decodeBytes(bytes);
 }

@@ -791,14 +791,33 @@ class ProjectImporter {
       dialogTitle: 'Seleccionar archivo de respaldo del proyecto',
       type: FileType.custom,
       allowedExtensions: const ['sppproject', 'sppbackup', 'zip'],
+      withReadStream: true,
     );
-    if (result == null || result.files.isEmpty || result.files.single.path == null) {
+    if (result == null || result.files.isEmpty) {
       return null;
     }
-    return await importProject(
-      result.files.single.path!,
-      mode: mode,
-      onProgress: onProgress,
+    final single = result.files.single;
+    final resolvedPath = await resolvePickedFilePath(
+      single,
+      workSubdir: 'project_import_picker',
     );
+    if (resolvedPath == null) {
+      return null;
+    }
+
+    try {
+      return await importProject(
+        resolvedPath,
+        mode: mode,
+        onProgress: onProgress,
+      );
+    } finally {
+      if (single.path == null) {
+        try {
+          final tempF = File(resolvedPath);
+          if (await tempF.exists()) await tempF.delete();
+        } catch (_) {}
+      }
+    }
   }
 }

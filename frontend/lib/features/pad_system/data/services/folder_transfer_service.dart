@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:isar_community/isar.dart';
+import 'package:path/path.dart' as p;
 import '../../../../core/services/filesystem_sync_service.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../../../core/services/app_storage_service.dart';
@@ -246,65 +246,100 @@ class FolderTransferService {
   /// Selecciona un .sppfolder, copia sus audios a la app y devuelve los datos.
   static Future<ImportedFolder?> pickFolder() async {
     FilesystemSyncService.suspend();
+    String? tempFileToClean;
     try {
       var picked = await FilePicker.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['sppfolder'],
+        allowedExtensions: const ['sppfolder'],
+        withReadStream: true,
       );
-      if (picked == null || picked.files.single.path == null) return null;
-
-      // Leer y descomprimir en isolate.
-      var bytes = await File(picked.files.single.path!).readAsBytes();
-      var archive = await compute(decodeZipInIsolate, bytes);
-
-      return await _processArchive(archive);
+      if (picked == null || picked.files.isEmpty) return null;
+      final file = picked.files.single;
+      final resolved = await resolvePickedFilePath(
+        file,
+        workSubdir: 'folder_picker',
+      );
+      if (resolved == null) return null;
+      if (file.path == null) {
+        tempFileToClean = resolved;
+      }
+      return await readFolderFile(resolved);
     } finally {
+      if (tempFileToClean != null) {
+        try {
+          final f = File(tempFileToClean);
+          if (await f.exists()) await f.delete();
+        } catch (_) {}
+      }
       await FilesystemSyncService.resume();
     }
   }
 
-  /// Lee un .sppfolder o .zip desde una ruta de archivo y devuelve los datos.
+  /// Lee un .sppfolder o .zip desde una ruta de archivo y devuelve los datos
+  /// usando extracción en streaming sin cargar el archivo completo en memoria RAM.
   static Future<ImportedFolder?> readFolderFile(String filePath) async {
     FilesystemSyncService.suspend();
+    final work = await AppStorageService.workDirectory('folder_import');
+    final stagingDir = Directory(
+      p.join(work.path, 'staging_${DateTime.now().microsecondsSinceEpoch}'),
+    );
+    await stagingDir.create(recursive: true);
     try {
-      var bytes = await File(filePath).readAsBytes();
-      var archive = await compute(decodeZipInIsolate, bytes);
-      return await _processArchive(archive);
-    } catch (_) {
+      await compute(
+        extractZipInIsolate,
+        ExtractZipArgs(zipPath: filePath, targetDir: stagingDir.path),
+      );
+      return await _processExtractedStaging(stagingDir);
+    } catch (e, st) {
+      debugPrint('[FolderTransfer] Error al leer archivo de carpeta: $e\n$st');
       return null;
     } finally {
+      if (await stagingDir.exists()) {
+        try {
+          await stagingDir.delete(recursive: true);
+        } catch (_) {}
+      }
       await FilesystemSyncService.resume();
     }
   }
 
-  /// Procesa un archivo ya descomprimido (reutilizado por pickFolder y readFolderFile).
-  static Future<ImportedFolder?> _processArchive(Archive archive) async {
-    Map<String, dynamic>? metadata;
-    var mediaPaths = <String, String>{};
-    final pendingMedia = <MapEntry<String, List<int>>>[];
-    for (var entry in archive) {
-      if (!entry.isFile) continue;
-      if (entry.name.endsWith('metadata.json')) {
-        metadata =
-            jsonDecode(utf8.decode(entry.content as List<int>))
-                as Map<String, dynamic>;
-      } else if (entry.name.contains('media/')) {
-        var base = entry.name.split('/').last;
-        pendingMedia.add(MapEntry(base, entry.content as List<int>));
+  /// Procesa los datos y audios extraídos en el directorio de staging hacia la biblioteca de medios.
+  static Future<ImportedFolder?> _processExtractedStaging(
+    Directory stagingDir,
+  ) async {
+    File? metadataFile;
+    final directMeta = File(p.join(stagingDir.path, 'metadata.json'));
+    if (await directMeta.exists()) {
+      metadataFile = directMeta;
+    } else {
+      for (final entity in stagingDir.listSync(recursive: true)) {
+        if (entity is File && entity.path.endsWith('metadata.json')) {
+          metadataFile = entity;
+          break;
+        }
       }
     }
-    if (metadata == null) return null;
+    if (metadataFile == null || !await metadataFile.exists()) return null;
 
-    var folder = metadata['folder'] as Map<String, dynamic>;
+    final metadata =
+        jsonDecode(await metadataFile.readAsString()) as Map<String, dynamic>;
+    final folder = metadata['folder'] as Map<String, dynamic>;
     final namespace =
         'folder_imports/${_sanitizeNamespace(folder['name'] as String? ?? 'Carpeta')}';
-    for (final item in pendingMedia) {
-      final localPath = await LocalAudioStorageService.importAudioBytes(
-        item.key,
-        item.value,
-        namespace: namespace,
-      );
-      mediaPaths[item.key] = localPath;
+
+    final mediaPaths = <String, String>{};
+    final mediaDir = Directory(p.join(stagingDir.path, 'media'));
+    if (await mediaDir.exists()) {
+      await for (final entity in mediaDir.list(recursive: false)) {
+        if (entity is File) {
+          final base = p.basename(entity.path);
+          final localPath = await LocalAudioStorageService.importAudioFile(
+            entity.path,
+            namespace: namespace,
+          );
+          mediaPaths[base] = localPath;
+        }
+      }
     }
 
     var padsList = (metadata['pads'] as List).cast<Map<String, dynamic>>();
