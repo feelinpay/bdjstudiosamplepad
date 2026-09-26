@@ -6,6 +6,7 @@ import '../../domain/entities/macro_entity.dart';
 import 'macro_builder_screen.dart';
 import '../../../midi/domain/entities/midi_mapping_entity.dart';
 import '../../../midi/presentation/providers/midi_providers.dart';
+import '../../../../core/widgets/app_snack.dart';
 
 class MacroListScreen extends ConsumerWidget {
   const MacroListScreen({super.key});
@@ -33,15 +34,12 @@ class MacroListScreen extends ConsumerWidget {
                   .read(macroListProvider.notifier)
                   .exportMacros();
               if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    duration: const Duration(seconds: 2),
-                    content: Text(
-                      path != null
-                          ? 'Exportado: $path'
-                          : 'No hay macros para exportar',
-                    ),
-                  ),
+                AppSnack.show(
+                  context,
+                  path != null
+                      ? 'Exportado: $path'
+                      : 'No hay macros para exportar',
+                  duration: const Duration(seconds: 2),
                 );
               }
             },
@@ -54,8 +52,10 @@ class MacroListScreen extends ConsumerWidget {
                   .read(macroListProvider.notifier)
                   .importMacros();
               if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(duration: const Duration(seconds: 2), content: Text('$count macros importadas')),
+                AppSnack.show(
+                  context,
+                  '$count macros importadas',
+                  duration: const Duration(seconds: 2),
                 );
               }
             },
@@ -451,8 +451,10 @@ class _MacroTile extends ConsumerWidget {
             switch (value) {
               case 'play':
                 ref.read(macroExecutorProvider).execute(macro);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(duration: const Duration(seconds: 2), content: Text('Macro "${macro.name}" ejecutada')),
+                AppSnack.show(
+                  context,
+                  'Macro "${macro.name}" ejecutada',
+                  duration: const Duration(seconds: 2),
                 );
                 break;
               case 'midi':
@@ -466,13 +468,10 @@ class _MacroTile extends ConsumerWidget {
                   actionType: MidiActionType.executeMacro,
                   actionValue: macro.id.toString(),
                 );
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'Toca un botón en tu controlador MIDI para asignar la Macro "${macro.name}"...',
-                    ),
-                    duration: const Duration(seconds: 4),
-                  ),
+                AppSnack.show(
+                  context,
+                  'Toca un botón en tu controlador MIDI para asignar la Macro "${macro.name}"...',
+                  duration: const Duration(seconds: 4),
                 );
                 break;
               case 'edit':

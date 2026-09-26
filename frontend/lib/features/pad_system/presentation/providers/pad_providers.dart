@@ -529,8 +529,8 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     });
 
     final needsRandomAccess = (model.reverse == true) ||
-        (model.startPointMs != null && model.startPointMs! > 0) ||
-        (model.loopPointMs != null && model.loopPointMs! > 0);
+        model.startPointMs > 0 ||
+        model.loopPointMs > 0;
     if (needsRandomAccess && model.samplePath != null && model.samplePath!.isNotEmpty) {
       final audioEngine = ref.read(audioEngineProvider);
       unawaited(audioEngine.loadAudio(
@@ -726,12 +726,15 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
     ))
         .map((id) => id.toString())
         .toSet();
+    final numericDeletingIds = deletingIds.map(int.parse).toSet();
     await LocalAudioStorageService.deleteAudioFiles(
       await _unsharedAudioPaths(
         isar,
         audioPaths,
-        deletingIds.map(int.parse).toSet(),
+        numericDeletingIds,
       ),
+      isar: isar,
+      excludingPadIds: numericDeletingIds,
     );
 
     await isar.writeTxn(() async {
@@ -774,12 +777,15 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
             .map((id) => id.toString()),
       );
     }
+    final numericDeletingIds = deletingIds.map(int.parse).toSet();
     await LocalAudioStorageService.deleteAudioFiles(
       await _unsharedAudioPaths(
         isar,
         allAudioPaths,
-        deletingIds.map(int.parse).toSet(),
+        numericDeletingIds,
       ),
+      isar: isar,
+      excludingPadIds: numericDeletingIds,
     );
 
     await isar.writeTxn(() async {

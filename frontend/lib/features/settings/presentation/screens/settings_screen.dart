@@ -25,6 +25,7 @@ import '../../../workspace/presentation/providers/workspace_providers.dart';
 import '../../../workspace/domain/services/project_importer.dart';
 import '../../../../core/platform/device_tier.dart';
 import '../providers/settings_provider.dart';
+import '../../../../core/widgets/app_snack.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -105,11 +106,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               final report = await CrashLogService.generateDiagnosticReport();
               await Clipboard.setData(ClipboardData(text: report));
               if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Informe de diagnóstico copiado al portapapeles.'),
-                    backgroundColor: Colors.deepPurpleAccent,
-                  ),
+                AppSnack.show(
+                  context,
+                  'Informe de diagnóstico copiado al portapapeles.',
+                  backgroundColor: Colors.deepPurpleAccent,
                 );
               }
             },
@@ -238,13 +238,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     .read(keyBindingsProvider.notifier)
                     .resetMasterHotkeys();
                 if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      duration: const Duration(seconds: 2),
-                      content: Text(
-                        'Atajos maestros restablecidos a las teclas por defecto.',
-                      ),
-                    ),
+                  AppSnack.show(
+                    context,
+                    'Atajos maestros restablecidos a las teclas por defecto.',
+                    duration: const Duration(seconds: 2),
                   );
                 }
               },
@@ -407,11 +404,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _selectAudioOutput(BuildContext context, WidgetRef ref) async {
     if (!context.mounted) return;
     final engine = ref.read(audioEngineProvider);
-    final settings = ref.read(settingsServiceProvider);
-    final selectedId = settings.audioOutputDeviceId;
-
     final devices = await engine.listOutputDevices();
     if (!context.mounted) return;
+
+    int? selectedId;
+    final settings = ref.read(settingsServiceProvider);
+    final savedName = settings.audioOutputDeviceName;
+    if (savedName != null && savedName.isNotEmpty) {
+      final match = devices.where((d) => d.name == savedName).firstOrNull;
+      selectedId = match?.id;
+    }
+    selectedId ??= settings.audioOutputDeviceId;
 
     if (devices.isEmpty) {
       setState(() {
@@ -449,27 +452,26 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final result = await _safeChangeDevice(context, ref, engine, deviceId);
     if (result != null && context.mounted) {
       setState(() => _audioChangeResult = result);
-      final messenger = ScaffoldMessenger.of(context);
-      messenger.clearSnackBars();
       if (result.isRecoverable) {
-        messenger.showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 4),
-            content: Text(result.userMessage),
-            action: result.isNoDevice
-                ? SnackBarAction(
-                    label: 'Reintentar',
-                    onPressed: () => _retry(context, ref),
-                  )
-                : SnackBarAction(
-                    label: 'Reintentar',
-                    onPressed: () => _selectAudioOutput(context, ref),
-                  ),
-          ),
+        AppSnack.show(
+          context,
+          result.userMessage,
+          duration: const Duration(seconds: 4),
+          action: result.isNoDevice
+              ? SnackBarAction(
+                  label: 'Reintentar',
+                  onPressed: () => _retry(context, ref),
+                )
+              : SnackBarAction(
+                  label: 'Reintentar',
+                  onPressed: () => _selectAudioOutput(context, ref),
+                ),
         );
       } else {
-        messenger.showSnackBar(
-          SnackBar(duration: const Duration(seconds: 2), content: Text(result.userMessage)),
+        AppSnack.show(
+          context,
+          result.userMessage,
+          duration: const Duration(seconds: 2),
         );
       }
     }
@@ -480,8 +482,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final engine = ref.read(audioEngineProvider);
     final settings = ref.read(settingsServiceProvider);
     final savedId = settings.audioOutputDeviceId;
+    final savedName = settings.audioOutputDeviceName;
 
-    final result = await engine.retryAudioInitialization(savedId);
+    final result = await engine.retryAudioInitialization(
+      savedId,
+      savedDeviceName: savedName,
+    );
     ref.read(audioInitializationCacheProvider.notifier).state = result;
     if (result.state == AudioEngineState.ready) {
       if (result.savedDeviceInvalid) {
@@ -495,8 +501,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         setState(() => _audioChangeResult = null);
       }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(duration: const Duration(seconds: 2), content: Text('Salida de audio restablecida.')),
+        AppSnack.show(
+          context,
+          'Salida de audio restablecida.',
+          duration: const Duration(seconds: 2),
         );
       }
     } else if (result.state == AudioEngineState.noDevice) {
@@ -627,16 +635,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               'No se encontraron dispositivos de salida de audio.',
             );
           }
+          if (engine.lastErrorMessage != null) {
+            return AudioChangeResult.failure(
+              engine.lastErrorMessage!,
+            );
+          }
           if (engine.engineState == AudioEngineState.error) {
             return AudioChangeResult.failure(
               engine.lastErrorMessage ??
                   'No se pudo cambiar la salida de audio.',
             );
           }
-          await ref
-              .read(settingsServiceProvider)
-              .setAudioOutputDeviceId(deviceId);
           final devices = await engine.listOutputDevices();
+          final settings = ref.read(settingsServiceProvider);
+          if (deviceId == null || deviceId == -1) {
+            await settings.setAudioOutputDeviceId(null);
+            await settings.setAudioOutputDeviceName(null);
+          } else {
+            final chosen = devices.where((d) => d.id == deviceId).firstOrNull;
+            await settings.setAudioOutputDeviceId(deviceId);
+            if (chosen != null) {
+              await settings.setAudioOutputDeviceName(chosen.name);
+            }
+          }
           ref.read(audioInitializationCacheProvider.notifier).state =
               AudioInitializationResult(
                 state: engine.engineState,
@@ -725,12 +746,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     DeviceTierDetector.updateOverride(selected);
     ref.read(audioEngineProvider).setSoundCacheCapacity(DeviceTierDetector.soundCacheCapacity);
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Perfil cambiado a ${selected.label}. El presupuesto de memoria se actualizó.'),
-          backgroundColor: Colors.deepPurpleAccent,
-          duration: const Duration(seconds: 3),
-        ),
+      AppSnack.show(
+        context,
+        'Perfil cambiado a ${selected.label}. El presupuesto de memoria se actualizó.',
+        backgroundColor: Colors.deepPurpleAccent,
+        duration: const Duration(seconds: 3),
       );
     }
   }
@@ -824,20 +844,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       });
 
       if (path != null && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Colors.green,
-            content: Text('Proyecto exportado con éxito.'),
-          ),
+        AppSnack.show(
+          context,
+          'Proyecto exportado con éxito.',
+          backgroundColor: Colors.green,
         );
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: Colors.redAccent,
-            content: Text('Error al exportar el proyecto: $e'),
-          ),
+        AppSnack.show(
+          context,
+          'Error al exportar el proyecto: $e',
+          backgroundColor: Colors.redAccent,
         );
       }
     }
@@ -933,13 +951,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (result.success) {
         ref.invalidate(workspaceListProvider);
         ref.invalidate(currentWorkspaceProvider);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: Colors.green,
-            content: Text(
-              '${result.message} (${result.workspacesImported} workspaces, ${result.padsImported} pads)',
-            ),
-          ),
+        AppSnack.show(
+          context,
+          '${result.message} (${result.workspacesImported} workspaces, ${result.padsImported} pads)',
+          backgroundColor: Colors.green,
         );
       } else {
         showDialog(
@@ -965,11 +980,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: Colors.redAccent,
-            content: Text('Error durante la importación: $e'),
-          ),
+        AppSnack.show(
+          context,
+          'Error durante la importación: $e',
+          backgroundColor: Colors.redAccent,
         );
       }
     }
@@ -1078,8 +1092,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     Future<void>.delayed(const Duration(milliseconds: 300), controller.dispose);
     if (!context.mounted) return;
     if (updated == true) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(duration: const Duration(seconds: 2), content: Text('Licencia actualizada correctamente.')),
+      AppSnack.show(
+        context,
+        'Licencia actualizada correctamente.',
+        duration: const Duration(seconds: 2),
       );
     }
   }
@@ -1272,19 +1288,17 @@ class _MasterHotkeyTile extends ConsumerWidget {
             // ya se desmontó, y usar `ref` ahí lanza un StateError.
             final settingsNotifier = ref.read(settingsProvider.notifier);
             final learnNotifier = ref.read(keyLearnPadProvider.notifier);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text(
-                  'Activa "Atajos de teclado en los pads" para poder asignar teclas.',
-                ),
-                duration: const Duration(seconds: 4),
-                action: SnackBarAction(
-                  label: 'Activar',
-                  onPressed: () {
-                    settingsNotifier.setEnablePadShortcuts(true);
-                    learnNotifier.state = actionKey;
-                  },
-                ),
+            AppSnack.show(
+              context,
+              'Activa "Atajos de teclado en los pads" para poder asignar teclas.',
+              duration: const Duration(seconds: 4),
+              action: SnackBarAction(
+                label: 'Activar',
+                onPressed: () {
+                  settingsNotifier.setEnablePadShortcuts(true);
+                  learnNotifier.state = actionKey;
+                  AppSnack.clear(context);
+                },
               ),
             );
             return;

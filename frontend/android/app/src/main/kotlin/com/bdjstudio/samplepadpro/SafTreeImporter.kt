@@ -2,6 +2,7 @@ package com.bdjstudio.samplepadpro
 
 import android.content.Context
 import android.net.Uri
+import android.os.StatFs
 import android.provider.DocumentsContract
 import android.util.Log
 import org.json.JSONArray
@@ -59,6 +60,23 @@ object SafTreeImporter {
             }
         } catch (_: Exception) {
             // Sin nombre visible se usa el docId (primary:MiCarpeta → MiCarpeta).
+        }
+
+        // Verificación de espacio libre disponible antes de copiar (StatFs)
+        val totalAudioBytes = calculateTreeAudioBytes(context, treeUri, rootDocId)
+        val stat = StatFs(context.cacheDir.absolutePath)
+        val availableBytes = stat.availableBytes
+        val baseMargin = 200L * 1024L * 1024L // 200 MB
+        val tenPercentMargin = (totalAudioBytes * 0.10).toLong()
+        val safetyMargin = maxOf(baseMargin, tenPercentMargin)
+        val requiredBytes = totalAudioBytes + safetyMargin
+
+        if (totalAudioBytes > 0 && availableBytes < requiredBytes) {
+            val neededMb = (requiredBytes / (1024 * 1024))
+            val availableMb = (availableBytes / (1024 * 1024))
+            throw IllegalStateException(
+                "Necesitas $neededMb MB libres para importar esta carpeta; tienes $availableMb MB."
+            )
         }
 
         val cacheRoot = File(
@@ -193,5 +211,56 @@ object SafTreeImporter {
             .replace(Regex("\\s+"), " ")
             .trim()
         return if (cleaned.isEmpty()) "_" else cleaned.take(120)
+    }
+
+    private fun calculateTreeAudioBytes(
+        context: Context,
+        treeUri: Uri,
+        parentDocId: String,
+    ): Long {
+        var total = 0L
+        data class DocEntry(val docId: String, val name: String, val size: Long, val isDir: Boolean)
+        val entries = ArrayList<DocEntry>()
+        try {
+            context.contentResolver.query(
+                DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocId),
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_SIZE,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE,
+                ),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val docId = cursor.getString(0) ?: continue
+                    val name = cursor.getString(1) ?: continue
+                    val size = cursor.getLong(2)
+                    val mime = cursor.getString(3) ?: ""
+                    entries.add(DocEntry(docId, name, size, mime == DocumentsContract.Document.MIME_TYPE_DIR))
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "No se pudo calcular tamaño para docId=$parentDocId: $e")
+            return 0L
+        }
+
+        for (entry in entries) {
+            if (entry.name.startsWith(".")) continue
+            if (entry.isDir) {
+                total += calculateTreeAudioBytes(context, treeUri, entry.docId)
+            } else {
+                val dot = entry.name.lastIndexOf('.')
+                if (dot > 0) {
+                    val ext = entry.name.substring(dot + 1).lowercase()
+                    if (AUDIO_EXTS.contains(ext) && entry.size > 0) {
+                        total += entry.size
+                    }
+                }
+            }
+        }
+        return total
     }
 }

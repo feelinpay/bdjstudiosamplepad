@@ -63,6 +63,12 @@ class MockAudioEngine implements AudioEnginePort {
   /// Último [savedDeviceId] recibido por [initializeAndRestoreDevice].
   int? lastSavedDeviceId;
 
+  /// Último [savedDeviceName] recibido por [initializeAndRestoreDevice].
+  String? lastSavedDeviceName;
+
+  /// Si true, simula que el dispositivo seleccionado está ocupado por otra app.
+  bool simulateDeviceBusy = false;
+
   /// Último deviceId aplicado por [selectOutputDevice] o [initializeAndRestoreDevice].
   int? mockCurrentDeviceId;
 
@@ -83,9 +89,11 @@ class MockAudioEngine implements AudioEnginePort {
 
   @override
   Future<AudioInitializationResult> initializeAndRestoreDevice(
-    int? savedDeviceId,
-  ) async {
-     lastSavedDeviceId = savedDeviceId;
+    int? savedDeviceId, {
+    String? savedDeviceName,
+  }) async {
+    lastSavedDeviceId = savedDeviceId;
+    lastSavedDeviceName = savedDeviceName;
     if (simulateNoDevices) {
       mockState = AudioEngineState.noDevice;
       return const AudioInitializationResult.noDevice(
@@ -95,11 +103,40 @@ class MockAudioEngine implements AudioEnginePort {
     initialized = true;
     mockState = AudioEngineState.ready;
     lastSavedDeviceFallback = false;
-    int resolvedDeviceId = mockDevices.firstWhere((d) => d.isDefault).id;
-    if (savedDeviceId != null && savedDeviceId != -1) {
+    final defaultDev = mockDevices.firstWhere(
+      (d) => d.isDefault,
+      orElse: () => mockDevices.first,
+    );
+    int resolvedDeviceId = defaultDev.id;
+    String? warningMessage;
+
+    if (simulateDeviceBusy) {
+      lastSavedDeviceFallback = true;
+      resolvedDeviceId = defaultDev.id;
+      final targetName = savedDeviceName ?? defaultDev.name;
+      warningMessage =
+          '«$targetName» está en uso exclusivo por otra aplicación (rekordbox, Serato, VirtualDJ). Se utiliza la salida predeterminada.';
+    } else if (savedDeviceName != null && savedDeviceName.isNotEmpty) {
+      final found = AudioOutputDevice.findByName(
+        mockDevices,
+        savedDeviceName,
+        (d) => d.name,
+      );
+      if (found == null) {
+        lastSavedDeviceFallback = true;
+        warningMessage =
+            'El dispositivo de audio anterior ya no está disponible. '
+            'Se utilizará la salida predeterminada.';
+      } else {
+        resolvedDeviceId = found.id;
+      }
+    } else if (savedDeviceId != null && savedDeviceId != -1) {
       final found = mockDevices.any((d) => d.id == savedDeviceId);
       if (!found) {
         lastSavedDeviceFallback = true;
+        warningMessage =
+            'El dispositivo de audio anterior ya no está disponible. '
+            'Se utilizará la salida predeterminada.';
       } else {
         resolvedDeviceId = savedDeviceId;
       }
@@ -110,21 +147,26 @@ class MockAudioEngine implements AudioEnginePort {
       devices: mockDevices,
       appliedDeviceId: resolvedDeviceId,
       savedDeviceInvalid: lastSavedDeviceFallback,
+      userMessage: warningMessage,
     );
   }
 
   @override
   Future<AudioInitializationResult> retryAudioInitialization(
-    int? savedDeviceId,
-  ) async {
+    int? savedDeviceId, {
+    String? savedDeviceName,
+  }) async {
     initialized = false;
     if (simulateSelectionError) {
       mockState = AudioEngineState.error;
-      return AudioInitializationResult.error(
+      return const AudioInitializationResult.error(
         userMessage: 'No se pudo cambiar la salida de audio.',
       );
     }
-    return initializeAndRestoreDevice(savedDeviceId);
+    return initializeAndRestoreDevice(
+      savedDeviceId,
+      savedDeviceName: savedDeviceName,
+    );
   }
 
   @override
@@ -151,11 +193,24 @@ class MockAudioEngine implements AudioEnginePort {
       mockState = AudioEngineState.noDevice;
       return;
     }
-       final target = deviceId == null || deviceId == -1
-           ? mockDevices.firstWhere((d) => d.isDefault)
-           : mockDevices.firstWhere((d) => d.id == deviceId, orElse: () => mockDevices.firstWhere((d) => d.isDefault));
-     mockCurrentDeviceId = target.id;
-     mockState = AudioEngineState.ready;
+    if (simulateDeviceBusy) {
+      final target = deviceId == null || deviceId == -1
+          ? mockDevices.firstWhere((d) => d.isDefault, orElse: () => mockDevices.first)
+          : mockDevices.firstWhere((d) => d.id == deviceId, orElse: () => mockDevices.firstWhere((d) => d.isDefault, orElse: () => mockDevices.first));
+      mockState = AudioEngineState.ready;
+      lastErrorMessage =
+          '«${target.name}» está en uso exclusivo por otra aplicación (rekordbox, Serato, VirtualDJ). Se mantiene la salida anterior.';
+      return;
+    }
+    final target = deviceId == null || deviceId == -1
+        ? mockDevices.firstWhere((d) => d.isDefault)
+        : mockDevices.firstWhere(
+            (d) => d.id == deviceId,
+            orElse: () => mockDevices.firstWhere((d) => d.isDefault),
+          );
+    mockCurrentDeviceId = target.id;
+    mockState = AudioEngineState.ready;
+    lastErrorMessage = null;
   }
 
   @override

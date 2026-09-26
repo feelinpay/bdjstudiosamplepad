@@ -74,6 +74,8 @@ typedef enum PlayerErrors {
   xiphLibsNotFound = 30,
   /// Bus ID not found.
   busIdNotFound = 31,
+  /// Audio device is busy or in exclusive use.
+  deviceBusy = 32,
 } PlayerErrors_t;
 
 /// Possible read sample errors

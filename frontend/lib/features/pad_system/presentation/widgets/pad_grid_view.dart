@@ -13,6 +13,7 @@ import 'pad_add_actions.dart';
 import 'pad_settings_dialog.dart';
 import '../../../../core/diagnostics/startup_timeline.dart';
 import '../../../../core/providers/library_sync_provider.dart';
+import '../../../../core/widgets/app_snack.dart';
 
 /// Grid ESTATICO tipo "cajon de apps" (rediseño Stream Deck):
 /// - El dispositivo fija el maximo de columnas automaticamente.
@@ -170,13 +171,10 @@ class _PadCell extends ConsumerWidget {
                 .read(padPageProvider(pageIndex).notifier)
                 .swapPads(moveSource, pad.id);
             ref.read(padMoveSourceProvider.notifier).state = null;
-            final messenger = ScaffoldMessenger.of(context);
-            messenger.clearSnackBars();
-            messenger.showSnackBar(
-              const SnackBar(
-                content: Text('Pads intercambiados correctamente'),
-                duration: Duration(seconds: 2),
-              ),
+            AppSnack.show(
+              context,
+              'Pads intercambiados correctamente',
+              duration: const Duration(seconds: 2),
             );
           }
           return;
@@ -559,24 +557,20 @@ class _PadCell extends ConsumerWidget {
                       .read(settingsProvider)
                       .enablePadShortcuts;
                   if (!enableShortcuts) {
-                    messenger.clearSnackBars();
-                    messenger.showSnackBar(
-                      SnackBar(
-                        content: const Text(
-                          'Debes activar "Atajos de teclado en los pads" para poder asignar teclas.',
-                        ),
-                        duration: const Duration(seconds: 4),
-                        action: SnackBarAction(
-                          label: 'Activar',
-                          onPressed: () {
-                            container
-                                .read(settingsProvider.notifier)
-                                .setEnablePadShortcuts(true);
-                            container.read(keyLearnPadProvider.notifier).state =
-                                pad.id;
-                            messenger.hideCurrentSnackBar();
-                          },
-                        ),
+                    AppSnack.show(
+                      messenger,
+                      'Debes activar "Atajos de teclado en los pads" para poder asignar teclas.',
+                      duration: const Duration(seconds: 4),
+                      action: SnackBarAction(
+                        label: 'Activar',
+                        onPressed: () {
+                          container
+                              .read(settingsProvider.notifier)
+                              .setEnablePadShortcuts(true);
+                          container.read(keyLearnPadProvider.notifier).state =
+                              pad.id;
+                          AppSnack.clear(messenger);
+                        },
                       ),
                     );
                     return;
@@ -598,23 +592,17 @@ class _PadCell extends ConsumerWidget {
                               container.read(currentWorkspaceIdProvider) ?? 0,
                           pageIndex: container.read(currentPageIndexProvider),
                         );
-                    messenger.clearSnackBars();
-                    messenger.showSnackBar(
-                      const SnackBar(
-                        duration: const Duration(seconds: 2),
-                        content: Text('Atajo de teclado quitado'),
-                      ),
+                    AppSnack.show(
+                      messenger,
+                      'Atajo de teclado quitado',
+                      duration: const Duration(seconds: 2),
                     );
                   } else {
                     container.read(keyLearnPadProvider.notifier).state = pad.id;
-                    messenger.clearSnackBars();
-                    messenger.showSnackBar(
-                      const SnackBar(
-                        duration: const Duration(seconds: 2),
-                        content: Text(
-                          'Presiona una tecla para asignarla a este pad',
-                        ),
-                      ),
+                    AppSnack.show(
+                      messenger,
+                      'Presiona una tecla para asignarla a este pad',
+                      duration: const Duration(seconds: 2),
                     );
                   }
                 },
@@ -632,26 +620,18 @@ class _PadCell extends ConsumerWidget {
                   final messenger = ScaffoldMessenger.of(context);
                   ConcurrencyShield.safePop(ctx);
                   if (container.read(librarySyncInProgressProvider)) {
-                    messenger.clearSnackBars();
-                    messenger.showSnackBar(
-                      const SnackBar(
-                        duration: Duration(seconds: 2),
-                        content: Text(
-                          'Sincronizando biblioteca, espera un momento...',
-                        ),
-                      ),
+                    AppSnack.show(
+                      messenger,
+                      'Sincronizando biblioteca, espera un momento...',
+                      duration: const Duration(seconds: 2),
                     );
                     return;
                   }
                   container.read(padMoveSourceProvider.notifier).state = pad.id;
-                  messenger.clearSnackBars();
-                  messenger.showSnackBar(
-                    const SnackBar(
-                      duration: const Duration(seconds: 2),
-                      content: Text(
-                        'Toca otro pad para intercambiar (o el mismo para cancelar)',
-                      ),
-                    ),
+                  AppSnack.show(
+                    messenger,
+                    'Toca otro pad para intercambiar (o el mismo para cancelar)',
+                    duration: const Duration(seconds: 2),
                   );
                 },
               ),

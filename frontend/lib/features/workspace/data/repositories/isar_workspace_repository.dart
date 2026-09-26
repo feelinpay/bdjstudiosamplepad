@@ -248,7 +248,11 @@ class IsarWorkspaceRepository implements WorkspaceRepository {
       padIds.map(int.parse).toSet(),
     );
     if (unsharedPaths.isNotEmpty) {
-      await LocalAudioStorageService.deleteAudioFiles(unsharedPaths);
+      await LocalAudioStorageService.deleteAudioFiles(
+        unsharedPaths,
+        isar: isar,
+        excludingPadIds: padIds.map(int.parse).toSet(),
+      );
     }
     if (wsName != null) {
       final wsSegment = LocalAudioStorageService.sanitizeSegment(wsName);

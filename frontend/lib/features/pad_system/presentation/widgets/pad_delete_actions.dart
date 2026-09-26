@@ -12,6 +12,7 @@ import '../../domain/entities/pad_entity.dart';
 import '../../../../core/utils/concurrency_shield.dart';
 import '../../../../core/widgets/blocking_progress_dialog.dart';
 import '../providers/pad_providers.dart';
+import '../../../../core/widgets/app_snack.dart';
 
 /// Servicio centralizado de acciones de eliminación (Menú del botón [-]):
 /// Administra borrado de Pads seleccionados, Carpetas y Workspaces.
@@ -318,11 +319,10 @@ class PadDeleteActions {
   ) async {
     var list = ref.read(workspaceListProvider).value ?? [];
     if (list.length <= 1) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          duration: const Duration(seconds: 2),
-          content: Text('No se puede eliminar el único workspace activo'),
-        ),
+      AppSnack.show(
+        context,
+        'No se puede eliminar el único workspace activo',
+        duration: const Duration(seconds: 2),
       );
       return false;
     }
@@ -401,16 +401,12 @@ class PadDeleteActions {
         },
       );
       if (context.mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              count > 0
-                  ? 'Se eliminaron $count archivos huérfanos del disco'
-                  : 'No se encontraron archivos huérfanos para limpiar',
-            ),
-            duration: const Duration(seconds: 3),
-          ),
+        AppSnack.show(
+          context,
+          count > 0
+              ? 'Se eliminaron $count archivos huérfanos del disco'
+              : 'No se encontraron archivos huérfanos para limpiar',
+          duration: const Duration(seconds: 3),
         );
       }
     });

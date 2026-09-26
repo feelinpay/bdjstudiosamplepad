@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/midi_providers.dart';
+import '../../../../core/widgets/app_snack.dart';
 
 class MidiStatusIcon extends ConsumerWidget {
   const MidiStatusIcon({super.key});
@@ -65,11 +66,10 @@ class MidiStatusIcon extends ConsumerWidget {
                                   .read(midiControllerProvider)
                                   .importMidiProfile();
                               if (success && context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    duration: const Duration(seconds: 2),
-                                    content: Text('Perfil MIDI Importado'),
-                                  ),
+                                AppSnack.show(
+                                  context,
+                                  'Perfil MIDI Importado',
+                                  duration: const Duration(seconds: 2),
                                 );
                               }
                             },
@@ -87,8 +87,10 @@ class MidiStatusIcon extends ConsumerWidget {
                                   .read(midiControllerProvider)
                                   .exportMidiProfile();
                               if (path != null && context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(duration: const Duration(seconds: 2), content: Text('Guardado en: $path')),
+                                AppSnack.show(
+                                  context,
+                                  'Guardado en: $path',
+                                  duration: const Duration(seconds: 2),
                                 );
                               }
                             },

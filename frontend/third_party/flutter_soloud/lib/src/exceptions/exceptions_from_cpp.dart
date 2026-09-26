@@ -405,3 +405,13 @@ class SoLoudBusIdNotFoundCppException extends SoLoudCppException {
   @override
   String get description => 'Bus id not found! (on the C++ side).';
 }
+
+/// The audio device is busy or in exclusive use.
+class SoLoudDeviceBusyCppException extends SoLoudCppException {
+  /// Creates a new [SoLoudDeviceBusyCppException].
+  const SoLoudDeviceBusyCppException([super.message]);
+
+  @override
+  String get description =>
+      'The audio device is busy or in exclusive use by another application! (on the C++ side).';
+}

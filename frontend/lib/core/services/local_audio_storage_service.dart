@@ -172,13 +172,30 @@ class LocalAudioStorageService {
     String originalPath, {
     String? namespace,
   }) async {
+    if (originalPath.startsWith(prefix)) {
+      return originalPath;
+    }
+
+    final audiosDir = await _getAudiosDir();
     final resolvedOriginal = await resolveContentUriToPath(originalPath);
+
+    // Si el archivo ya reside dentro de la carpeta interna de audios de la app,
+    // evitamos duplicar almacenamiento y retornamos su ruta relativa canónica.
+    try {
+      final canonicalAudios = p.canonicalize(audiosDir.path);
+      final canonicalOriginal = p.canonicalize(resolvedOriginal);
+      if (p.isWithin(canonicalAudios, canonicalOriginal) ||
+          canonicalAudios == canonicalOriginal) {
+        final rel = p.relative(canonicalOriginal, from: canonicalAudios);
+        return '$prefix${_toPosixRelative(rel)}';
+      }
+    } catch (_) {}
+
     final ext = p.extension(resolvedOriginal).isEmpty
         ? '.mp3'
         : p.extension(resolvedOriginal);
     final baseName = p.basenameWithoutExtension(resolvedOriginal);
 
-    final audiosDir = await _getAudiosDir();
     final relativePath = await _resolveUniqueFilePath(
       audiosDir,
       namespace,
@@ -270,13 +287,36 @@ class LocalAudioStorageService {
   }
 
   /// Elimina los archivos de audio del disco que coincidan con las rutas dadas.
-  /// También elimina sus waveforms cacheadas.
-  static Future<int> deleteAudioFiles(List<String> samplePaths) async {
+  /// Si se provee [isar], verifica antes de borrar cada archivo que ningún otro pad
+  /// en la base de datos (excluyendo [excludingPadIds]) siga utilizándolo.
+  /// También elimina sus waveforms cacheadas si el archivo fue efectivamente borrado.
+  static Future<int> deleteAudioFiles(
+    List<String> samplePaths, {
+    Isar? isar,
+    Iterable<int>? excludingPadIds,
+  }) async {
     final audiosDir = await _getAudiosDir();
     final waveDir = await _getWaveformDir();
     var deleted = 0;
+    final excluding = excludingPadIds?.toSet() ?? const <int>{};
+
+    Set<String>? inUsePaths;
+    if (isar != null) {
+      final remaining = await isar.padModels
+          .filter()
+          .samplePathIsNotNull()
+          .findAll();
+      inUsePaths = {
+        for (final p in remaining)
+          if (!excluding.contains(p.id)) p.samplePath!,
+      };
+    }
 
     for (final path in samplePaths.toSet()) {
+      if (inUsePaths != null && inUsePaths.contains(path)) {
+        continue;
+      }
+
       final managed = await _managedFileForPath(path, audiosDir);
       if (managed == null) continue;
       final file = managed.file;

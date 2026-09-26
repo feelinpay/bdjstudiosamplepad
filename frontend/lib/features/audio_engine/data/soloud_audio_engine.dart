@@ -12,7 +12,6 @@ import '../../../core/services/local_audio_storage_service.dart';
 import '../../../core/utils/lru_cache.dart';
 import '../../../core/utils/audio_log.dart';
 import '../../../core/audio/audio_duration_estimator.dart';
-import '../../../core/audio/audio_load_request.dart';
 import '../../../core/diagnostics/startup_timeline.dart';
 import 'audio_load_scheduler.dart';
 
@@ -71,6 +70,9 @@ class SoLoudAudioEngine implements AudioEnginePort {
   int _initAttempt = 0;
   List<PlaybackDevice>? _deviceSnapshot; // enumeración del arranque actual
   int? _preferredDeviceId;               // pedido por initializeAndRestoreDevice
+  String? _preferredDeviceName;
+  bool _savedDeviceBusyFallback = false;
+  String? _startupFallbackMessage;
   int? _openedDeviceId;                  // con qué dispositivo se abrió realmente
 
   late final AudioLoadScheduler _preloadScheduler = AudioLoadScheduler(
@@ -240,10 +242,24 @@ class SoLoudAudioEngine implements AudioEnginePort {
       return;
     }
 
-    final preferred =
+    final defaultDevice = devices.firstWhere(
+      (d) => d.isDefault,
+      orElse: () => devices.first,
+    );
+
+    PlaybackDevice? preferred;
+    if (_preferredDeviceName != null && _preferredDeviceName!.isNotEmpty) {
+      preferred = AudioOutputDevice.findByName(
+        devices,
+        _preferredDeviceName,
+        (d) => d.name,
+        onLog: (msg) => debugPrint(msg),
+      );
+    }
+    preferred ??=
         devices.where((d) => d.id == _preferredDeviceId).firstOrNull;
-    final target = preferred ??
-        devices.firstWhere((d) => d.isDefault, orElse: () => devices.first);
+
+    PlaybackDevice target = preferred ?? defaultDevice;
 
     try {
       // Progressive init strategies. The native layer bounds each device open
@@ -299,6 +315,44 @@ class SoLoudAudioEngine implements AudioEnginePort {
           try {
             if (_soloud!.isInitialized) _soloud!.deinit();
           } catch (_) {}
+
+          // Si el dispositivo guardado está en uso exclusivo, hacemos fallback inmediato
+          // al dispositivo predeterminado para que la app no quede muda.
+          if (_isDeviceBusyException(e) && target.id != defaultDevice.id) {
+            debugPrint(
+              '[AudioEngine] Preferred device "${target.name}" is busy. Falling back to default "${defaultDevice.name}"',
+            );
+            _savedDeviceBusyFallback = true;
+            _startupFallbackMessage =
+                '«${target.name}» está en uso exclusivo por otra aplicación (rekordbox, Serato, VirtualDJ). Se utiliza la salida predeterminada.';
+            target = defaultDevice;
+            try {
+              await _soloud!
+                  .init(
+                    device: (Platform.isAndroid || Platform.isIOS) ? null : defaultDevice,
+                    sampleRate: attempt.sampleRate,
+                    bufferSize: attempt.bufferSize,
+                    channels: Channels.stereo,
+                    lowLatency: attempt.lowLatency,
+                  )
+                  .timeout(
+                    const Duration(seconds: 6),
+                    onTimeout: () => throw TimeoutException(
+                      'SoLoud.init() fallback exceeded 6 s',
+                    ),
+                  );
+              opened = true;
+              _openedDeviceId = defaultDevice.id;
+              break;
+            } catch (fallbackErr) {
+              debugPrint('[AudioEngine] fallback to default device failed: $fallbackErr');
+              lastError = fallbackErr;
+              try {
+                if (_soloud!.isInitialized) _soloud!.deinit();
+              } catch (_) {}
+            }
+          }
+
           if (Platform.isAndroid && _soloud != null) {
             final drainSw = Stopwatch()..start();
             while (_soloud!.initEngineStatus() == -1 &&
@@ -422,13 +476,17 @@ class SoLoudAudioEngine implements AudioEnginePort {
 
   @override
   Future<AudioInitializationResult> initializeAndRestoreDevice(
-    int? savedDeviceId,
-  ) async {
+    int? savedDeviceId, {
+    String? savedDeviceName,
+  }) async {
     debugPrint(
-      '[AudioEngine] initializeAndRestoreDevice: savedDeviceId=$savedDeviceId',
+      '[AudioEngine] initializeAndRestoreDevice: savedDeviceId=$savedDeviceId savedDeviceName=$savedDeviceName',
     );
 
     _preferredDeviceId = savedDeviceId;
+    _preferredDeviceName = savedDeviceName;
+    _savedDeviceBusyFallback = false;
+    _startupFallbackMessage = null;
     await _ensureInitialized();
 
     if (_audioDisabled || _soloud == null) {
@@ -456,10 +514,34 @@ class SoLoudAudioEngine implements AudioEnginePort {
       orElse: () => devices.first,
     );
     bool savedDeviceInvalid = false;
-    int targetDeviceId = savedDeviceId ?? defaultDevice.id;
+    int targetDeviceId = _openedDeviceId ?? defaultDevice.id;
     String? warningMessage;
 
-    if (savedDeviceId != null && savedDeviceId != -1) {
+    if (_savedDeviceBusyFallback) {
+      savedDeviceInvalid = true;
+      targetDeviceId = defaultDevice.id;
+      warningMessage = _startupFallbackMessage;
+    } else if (savedDeviceName != null && savedDeviceName.isNotEmpty) {
+      final match = AudioOutputDevice.findByName(
+        devices,
+        savedDeviceName,
+        (d) => d.name,
+        onLog: (msg) => debugPrint(msg),
+      );
+      if (match == null) {
+        savedDeviceInvalid = true;
+        targetDeviceId = defaultDevice.id;
+        warningMessage =
+            'El dispositivo de audio anterior ya no está disponible. '
+            'Se utilizará la salida predeterminada.';
+        debugPrint(
+          '[AudioEngine] saved device name "$savedDeviceName" not found; '
+          'falling back to default ${defaultDevice.id}',
+        );
+      } else {
+        targetDeviceId = match.id;
+      }
+    } else if (savedDeviceId != null && savedDeviceId != -1) {
       final savedExists = devices.any((d) => d.id == savedDeviceId);
       if (!savedExists) {
         savedDeviceInvalid = true;
@@ -484,7 +566,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
 
     final needsDeviceSwitch = targetDeviceId != _openedDeviceId;
     if (needsDeviceSwitch) {
-      final selectResult = await _changeDevice(targetDeviceId, devices: devices);
+      final selectResult = _changeDevice(targetDeviceId, devices: devices);
       if (selectResult != null) {
         _engineState = AudioEngineState.error;
         _lastErrorMessage = selectResult;
@@ -495,7 +577,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
     return AudioInitializationResult(
       state: _engineState,
       devices: mappedDevices,
-      appliedDeviceId: targetDeviceId,
+      appliedDeviceId: _openedDeviceId ?? targetDeviceId,
       savedDeviceInvalid: savedDeviceInvalid,
       userMessage: warningMessage,
     );
@@ -503,10 +585,11 @@ class SoLoudAudioEngine implements AudioEnginePort {
 
   @override
   Future<AudioInitializationResult> retryAudioInitialization(
-    int? savedDeviceId,
-  ) async {
+    int? savedDeviceId, {
+    String? savedDeviceName,
+  }) async {
     debugPrint(
-      '[AudioEngine] retryAudioInitialization: savedDeviceId=$savedDeviceId',
+      '[AudioEngine] retryAudioInitialization: savedDeviceId=$savedDeviceId savedDeviceName=$savedDeviceName',
     );
 
     _deviceSnapshot = null;
@@ -531,7 +614,10 @@ class SoLoudAudioEngine implements AudioEnginePort {
     }
 
     _isChangingDevice = false;
-    return initializeAndRestoreDevice(savedDeviceId);
+    return initializeAndRestoreDevice(
+      savedDeviceId,
+      savedDeviceName: savedDeviceName,
+    );
   }
 
   @override
@@ -598,7 +684,8 @@ class SoLoudAudioEngine implements AudioEnginePort {
         if (errorMsg.contains('No playback devices were found')) {
           _engineState = AudioEngineState.noDevice;
         } else {
-          _engineState = AudioEngineState.error;
+          // If it was deviceBusy, _changeDevice already set _engineState to ready
+          // to keep playback alive, but _lastErrorMessage is populated.
           debugPrint('[AudioEngine] selectOutputDevice failed: $errorMsg');
         }
         return;
@@ -611,18 +698,16 @@ class SoLoudAudioEngine implements AudioEnginePort {
     }
   }
 
+  static bool _isDeviceBusyException(Object e) {
+    if (e is SoLoudDeviceBusyCppException) return true;
+    final str = e.toString();
+    return str.contains('deviceBusy') ||
+        str.contains('AUDCLNT_E_DEVICE_IN_USE') ||
+        str.contains('MA_BUSY') ||
+        str.contains('MA_ALREADY_IN_USE');
+  }
+
   static String _friendlyDeviceErrorMessage(String raw) {
-    final lower = raw.toLowerCase();
-    if (raw.contains('DEVICE_IN_USE') ||
-        raw.contains('AUDCLNT_E_DEVICE_IN_USE') ||
-        raw.contains('UNKNOWN_ERROR') ||
-        lower.contains('busy') ||
-        lower.contains('exclusive') ||
-        lower.contains('in use') ||
-        lower.contains('en uso')) {
-      return 'La salida seleccionada está en uso exclusivo por otra aplicación (p. ej. rekordbox o Serato). '
-          'Cambia esa app a ASIO, desactiva el modo exclusivo en Windows o usa otra salida.';
-    }
     return 'No se pudo cambiar la salida de audio. Inténtalo de nuevo.';
   }
 
@@ -631,13 +716,13 @@ class SoLoudAudioEngine implements AudioEnginePort {
       _lastErrorMessage = 'No se encontró una salida de audio disponible.';
       return _lastErrorMessage;
     }
+    final devList = devices ?? _soloud!.listPlaybackDevices();
+    final targetDevice = devList.firstWhere(
+      (d) => d.id == deviceId,
+      orElse: () =>
+          devList.firstWhere((d) => d.isDefault, orElse: () => devList.first),
+    );
     try {
-      final devList = devices ?? _soloud!.listPlaybackDevices();
-      final targetDevice = devList.firstWhere(
-        (d) => d.id == deviceId,
-        orElse: () =>
-            devList.firstWhere((d) => d.isDefault, orElse: () => devList.first),
-      );
       _soloud!.changeDevice(newDevice: targetDevice);
       _openedDeviceId = targetDevice.id;
       _engineState = AudioEngineState.ready;
@@ -650,6 +735,15 @@ class SoLoudAudioEngine implements AudioEnginePort {
         _engineState = AudioEngineState.noDevice;
         _lastErrorMessage = 'No se encontró una salida de audio disponible. '
             'Conecta parlantes, auriculares o una interfaz de audio.';
+        return _lastErrorMessage;
+      }
+      if (_isDeviceBusyException(e)) {
+        // En C++, miniaudio_changeDevice_impl ya revirtió a la salida anterior (o default).
+        // Por tanto, _openedDeviceId NO cambia (se mantiene la salida anterior).
+        // El motor sigue en AudioEngineState.ready para no quedarse mudo.
+        _engineState = AudioEngineState.ready;
+        _lastErrorMessage =
+            '«${targetDevice.name}» está en uso exclusivo por otra aplicación (rekordbox, Serato, VirtualDJ). Se mantiene la salida anterior.';
         return _lastErrorMessage;
       }
       _engineState = AudioEngineState.error;
@@ -1320,7 +1414,6 @@ class SoLoudAudioEngine implements AudioEnginePort {
     } catch (_) {}
   }
 
-  @override
   int _visualizationRefs = 0;
 
   @visibleForTesting

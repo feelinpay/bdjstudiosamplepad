@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/license_providers.dart';
 import '../../../../core/licensing/licensing_port.dart';
 import '../../../../core/widgets/brand_logo.dart';
+import '../../../../core/widgets/app_snack.dart';
 
 class ActivationScreen extends ConsumerStatefulWidget {
   const ActivationScreen({super.key});
@@ -184,18 +185,11 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
                               Clipboard.setData(
                                 ClipboardData(text: _hardwareCode),
                               );
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  duration: Duration(seconds: 2),
-                                  backgroundColor: Color(0xFF00F0FF),
-                                  content: Text(
-                                    '¡Código HWID copiado al portapapeles! ✓',
-                                    style: TextStyle(
-                                      color: Colors.black,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
+                              AppSnack.show(
+                                context,
+                                '¡Código HWID copiado al portapapeles! ✓',
+                                duration: const Duration(seconds: 2),
+                                backgroundColor: const Color(0xFF00F0FF),
                               );
                             },
                           ),

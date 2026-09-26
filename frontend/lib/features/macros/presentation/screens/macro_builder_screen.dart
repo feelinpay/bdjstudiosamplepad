@@ -4,6 +4,7 @@ import '../providers/macro_providers.dart';
 import '../widgets/destination_picker.dart';
 import '../../domain/entities/macro_entity.dart';
 import '../../../workspace/presentation/providers/workspace_providers.dart';
+import '../../../../core/widgets/app_snack.dart';
 
 class MacroBuilderScreen extends ConsumerStatefulWidget {
   final MacroEntity? existingMacro;
@@ -76,15 +77,11 @@ class _MacroBuilderScreenState extends ConsumerState<MacroBuilderScreen> {
   Future<void> _save() async {
     var name = _nameController.text.trim();
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(duration: const Duration(seconds: 2), content: Text('Escribe un nombre para la macro')),
-      );
+      AppSnack.show(context, 'Escribe un nombre para la macro', duration: const Duration(seconds: 2));
       return;
     }
     if (_actions.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(duration: const Duration(seconds: 2), content: Text('Agrega al menos una acción')),
-      );
+      AppSnack.show(context, 'Agrega al menos una acción', duration: const Duration(seconds: 2));
       return;
     }
 
@@ -436,11 +433,10 @@ class _MacroBuilderScreenState extends ConsumerState<MacroBuilderScreen> {
   }) async {
     final workspaces = ref.read(workspaceListProvider).value ?? [];
     if (workspaces.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          duration: Duration(seconds: 2),
-          content: Text('Cargando workspaces...'),
-        ),
+      AppSnack.show(
+        context,
+        'Cargando workspaces...',
+        duration: const Duration(seconds: 2),
       );
       return;
     }

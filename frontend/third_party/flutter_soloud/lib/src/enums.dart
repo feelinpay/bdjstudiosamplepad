@@ -105,7 +105,10 @@ enum PlayerErrors {
   xiphLibsNotFound(30),
 
   /// Bus id not found.
-  busIdNotFound(31);
+  busIdNotFound(31),
+
+  /// The audio device is busy or in exclusive use.
+  deviceBusy(32);
 
   const PlayerErrors(this.value);
 
@@ -202,6 +205,8 @@ enum PlayerErrors {
             'https://docs.page/alnitak/flutter_soloud_docs/get_started/no_xiph_libs';
       case PlayerErrors.busIdNotFound:
         return 'Bus id not found!';
+      case PlayerErrors.deviceBusy:
+        return 'The audio device is busy or in exclusive use by another application!';
     }
   }
 

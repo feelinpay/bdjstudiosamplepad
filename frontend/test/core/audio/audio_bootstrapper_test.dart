@@ -8,7 +8,10 @@ import '../../helpers/mock_audio_engine.dart';
 
 class _FailingAudioEngine extends MockAudioEngine {
   @override
-  Future<AudioInitializationResult> initializeAndRestoreDevice(int? savedDeviceId) async {
+  Future<AudioInitializationResult> initializeAndRestoreDevice(
+    int? savedDeviceId, {
+    String? savedDeviceName,
+  }) async {
     throw Exception('Simulated fatal audio failure');
   }
 }

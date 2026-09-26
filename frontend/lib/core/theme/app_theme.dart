@@ -81,10 +81,20 @@ class AppTheme {
         overlayColor: AppColors.primary.withValues(alpha: 0.2),
       ),
       snackBarTheme: SnackBarThemeData(
-        backgroundColor: AppColors.surface,
-        contentTextStyle: const TextStyle(color: AppColors.textPrimary),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        backgroundColor: const Color(0xFF1E2230),
+        contentTextStyle: const TextStyle(
+          color: Colors.white,
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+        ),
+        actionTextColor: AppColors.secondary,
+        closeIconColor: Colors.white70,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: const BorderSide(color: Color(0xFF333B50), width: 1),
+        ),
         behavior: SnackBarBehavior.floating,
+        elevation: 6,
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: AppColors.surface,

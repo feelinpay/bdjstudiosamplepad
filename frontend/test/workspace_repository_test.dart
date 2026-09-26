@@ -442,4 +442,69 @@ void main() {
         reason:
             'Un workspace con índices correctos no debe escribir en la base de datos');
   });
+
+  test('dos pads comparten el mismo archivo: al borrar uno, el otro se conserva y el archivo existe', () async {
+    final isar = await _openIsar(tempRoot);
+    addTearDown(() => isar.close());
+
+    final ws = WorkspaceModel()..name = 'Set Shared'..createdAt = DateTime.now();
+    final page = PageModel()..pageIndex = 0..workspace.value = ws;
+    final pad1 = PadModel()
+      ..padId = 0
+      ..label = 'Pad 1'
+      ..colorHex = 0xFF000000
+      ..samplePath = 'app_local://Set Shared/shared.wav'
+      ..page.value = page;
+    final pad2 = PadModel()
+      ..padId = 1
+      ..label = 'Pad 2'
+      ..colorHex = 0xFF000000
+      ..samplePath = 'app_local://Set Shared/shared.wav'
+      ..page.value = page;
+
+    await isar.writeTxn(() async {
+      await isar.workspaceModels.put(ws);
+      await isar.pageModels.put(page);
+      ws.pages.addAll([page]);
+      await ws.pages.save();
+      await isar.padModels.putAll([pad1, pad2]);
+      await pad1.page.save();
+      await pad2.page.save();
+    });
+
+    final file = File(
+      await LocalAudioStorageService.resolvePath('app_local://Set Shared/shared.wav'),
+    );
+    await file.create(recursive: true);
+    expect(file.existsSync(), isTrue);
+
+    // Borramos pad1 excluyéndolo de la comprobación
+    await LocalAudioStorageService.deleteAudioFiles(
+      [pad1.samplePath!],
+      isar: isar,
+      excludingPadIds: [pad1.id],
+    );
+    await isar.writeTxn(() async {
+      await isar.padModels.delete(pad1.id);
+    });
+
+    // pad2 sigue existiendo y el archivo físico NO se borró
+    expect(file.existsSync(), isTrue, reason: 'El archivo físico debe persistir porque pad2 aún lo utiliza');
+    final pad2InDb = await isar.padModels.get(pad2.id);
+    expect(pad2InDb, isNotNull);
+    expect(pad2InDb!.samplePath, 'app_local://Set Shared/shared.wav');
+
+    // Ahora borramos pad2 (último pad que usa el archivo)
+    await LocalAudioStorageService.deleteAudioFiles(
+      [pad2.samplePath!],
+      isar: isar,
+      excludingPadIds: [pad2.id],
+    );
+    await isar.writeTxn(() async {
+      await isar.padModels.delete(pad2.id);
+    });
+
+    // Ahora sí se debió haber borrado el archivo físico
+    expect(file.existsSync(), isFalse, reason: 'El archivo físico debe borrarse al eliminarse el último pad');
+  });
 }

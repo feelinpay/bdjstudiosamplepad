@@ -8,8 +8,41 @@ import '../../../pad_system/data/models/pad_model.dart';
 import '../../../../core/services/app_storage_service.dart';
 import '../../../../core/services/filesystem_sync_service.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
+import '../../../../core/services/crash_log_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/library_write_lock.dart';
+
+/// Resultado tipado de la importación de un Workspace desde una carpeta.
+sealed class WorkspaceImportResult {
+  const WorkspaceImportResult();
+}
+
+class WorkspaceImportSuccess extends WorkspaceImportResult {
+  final WorkspaceModel workspace;
+  const WorkspaceImportSuccess(this.workspace);
+}
+
+class WorkspaceImportNotFound extends WorkspaceImportResult {
+  final String path;
+  const WorkspaceImportNotFound(this.path);
+}
+
+class WorkspaceImportAccessDenied extends WorkspaceImportResult {
+  final String path;
+  final Object error;
+  const WorkspaceImportAccessDenied(this.path, this.error);
+}
+
+class WorkspaceImportNoAudio extends WorkspaceImportResult {
+  final String path;
+  const WorkspaceImportNoAudio(this.path);
+}
+
+class WorkspaceImportFailed extends WorkspaceImportResult {
+  final Object error;
+  final StackTrace? stackTrace;
+  const WorkspaceImportFailed(this.error, [this.stackTrace]);
+}
 
 /// Nodo del árbol de carpetas: subcarpetas + archivos de audio.
 class _TreeNode {
@@ -39,18 +72,37 @@ class WorkspaceImporter {
 
   /// Copia la carpeta [sourcePath] a la biblioteca de medios como un nuevo
   /// Workspace y construye su estructura en la base de datos.
-  /// Devuelve el Workspace recién importado o `null` si falla.
-  Future<WorkspaceModel?> importWorkspace(String sourcePath) =>
+  /// Devuelve un [WorkspaceImportResult] con el resultado de la operación.
+  Future<WorkspaceImportResult> importWorkspaceResult(
+    String sourcePath, {
+    String? customName,
+  }) =>
       LibraryWriteLock.run(() async {
     FilesystemSyncService.suspend();
     Directory? stagingDir;
     Isar? isarInstance;
     try {
       final source = Directory(sourcePath);
-      if (!await source.exists()) return null;
+      CrashLogService.log('[WorkspaceImporter] Iniciando importación: path=$sourcePath');
+      if (!await source.exists()) {
+        CrashLogService.log('[WorkspaceImporter] Carpeta no existe: $sourcePath');
+        return WorkspaceImportNotFound(sourcePath);
+      }
 
-      final hasContent = await _hasImportableContent(source);
-      if (!hasContent) return null;
+      bool hasContent;
+      try {
+        hasContent = await _hasImportableContent(source);
+      } on FileSystemException catch (e) {
+        CrashLogService.log('[WorkspaceImporter] Error de acceso a archivos: $e');
+        return WorkspaceImportAccessDenied(sourcePath, e);
+      } catch (e) {
+        CrashLogService.log('[WorkspaceImporter] Error escaneando contenido: $e');
+        return WorkspaceImportFailed(e);
+      }
+
+      if (!hasContent) {
+        return WorkspaceImportNoAudio(sourcePath);
+      }
 
       final isar = await dbFuture;
       isarInstance = isar;
@@ -64,8 +116,11 @@ class WorkspaceImporter {
       final dbNames = (await isar.workspaceModels.where().findAll())
           .map((w) => w.name)
           .toSet();
+      final baseProposed = (customName != null && customName.trim().isNotEmpty)
+          ? customName.trim()
+          : p.basename(source.path);
       final targetName =
-          await _uniqueFolderName(mediaDir, dbNames, p.basename(source.path));
+          await _uniqueFolderName(mediaDir, dbNames, baseProposed);
       
       // Use staging directory for atomic commit
       stagingDir = Directory(p.join(mediaDir.path, '${targetName}_staging_${DateTime.now().millisecondsSinceEpoch}'));
@@ -83,8 +138,7 @@ class WorkspaceImporter {
       );
 
       if (workspace == null) {
-        // Database build failed, return null
-        return null;
+        return const WorkspaceImportFailed('Fallo al registrar estructura en la base de datos.');
       }
 
       // Atomic commit: rename staging to final target
@@ -95,9 +149,11 @@ class WorkspaceImporter {
       await stagingDir.rename(target.path);
       stagingDir = null; // Don't delete on success
 
-      return workspace;
-    } catch (e) {
+      CrashLogService.log('[WorkspaceImporter] Workspace importado exitosamente: ${workspace.name}');
+      return WorkspaceImportSuccess(workspace);
+    } catch (e, st) {
       debugPrint('Import Error: $e');
+      CrashLogService.log('[WorkspaceImporter] Fallo crítico durante la importación: $e\n$st');
       // Rollback: clean up staging directory
       if (stagingDir != null && await stagingDir.exists()) {
         try {
@@ -107,22 +163,48 @@ class WorkspaceImporter {
           debugPrint('Import rollback cleanup failed: $cleanupError');
         }
       }
-      return null;
+      return WorkspaceImportFailed(e, st);
     } finally {
       await FilesystemSyncService.resume(isarInstance);
     }
   });
 
+  /// Compatibilidad: devuelve el Workspace recién importado o `null` si falla.
+  Future<WorkspaceModel?> importWorkspace(String sourcePath) async {
+    final result = await importWorkspaceResult(sourcePath);
+    if (result is WorkspaceImportSuccess) {
+      return result.workspace;
+    }
+    return null;
+  }
+
   /// Verifica que la carpeta contenga al menos un archivo de audio.
   Future<bool> _hasImportableContent(Directory source) async {
+    int totalEntities = 0;
     try {
       await for (final entity in source.list(recursive: true)) {
+        totalEntities++;
         if (entity is File) {
           final ext = p.extension(entity.path).toLowerCase();
-          if (LocalAudioStorageService.supportedAudioExtensions.contains(ext)) return true;
+          if (LocalAudioStorageService.supportedAudioExtensions.contains(ext)) {
+            return true;
+          }
         }
       }
-    } catch (_) {}
+    } on FileSystemException catch (e) {
+      CrashLogService.log(
+        '[WorkspaceImporter] FileSystemException en _hasImportableContent: '
+        'path=${source.path}, code=${e.osError?.errorCode}, msg=${e.message}',
+      );
+      rethrow;
+    } catch (e) {
+      CrashLogService.log('[WorkspaceImporter] Error en _hasImportableContent: $e');
+      rethrow;
+    }
+    CrashLogService.log(
+      '[WorkspaceImporter] Carpeta examinada sin audios compatibles: '
+      'path=${source.path}, totalEntities=$totalEntities',
+    );
     return false;
   }
 
@@ -138,7 +220,12 @@ class WorkspaceImporter {
       } else if (entity is File) {
         final ext = p.extension(entity.path).toLowerCase();
         if (LocalAudioStorageService.supportedAudioExtensions.contains(ext)) {
-          await entity.copy(p.join(target.path, name));
+          final dest = p.join(target.path, name);
+          try {
+            await entity.rename(dest);
+          } catch (_) {
+            await entity.copy(dest);
+          }
         }
       }
     }

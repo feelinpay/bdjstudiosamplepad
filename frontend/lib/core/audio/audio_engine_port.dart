@@ -22,12 +22,16 @@ abstract class AudioEnginePort {
   /// la lista de dispositivos disponibles y información sobre si el
   /// dispositivo guardado fue reemplazado.
   Future<AudioInitializationResult> initializeAndRestoreDevice(
-    int? savedDeviceId,
-  );
+    int? savedDeviceId, {
+    String? savedDeviceName,
+  });
 
   /// Reintenta la inicialización del motor de audio después de un fallo.
   /// Es seguro de llamar incluso si el motor ya está listo.
-  Future<AudioInitializationResult> retryAudioInitialization(int? savedDeviceId);
+  Future<AudioInitializationResult> retryAudioInitialization(
+    int? savedDeviceId, {
+    String? savedDeviceName,
+  });
 
   /// Fuerza un nuevo escaneo de dispositivos de salida sin reiniciar el motor.
   /// Útil para detectar dispositivos conectados/desconectados en caliente.

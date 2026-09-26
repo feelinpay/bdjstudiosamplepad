@@ -70,6 +70,18 @@ class SafFolderImportService {
     return path.contains('%3A') || path.contains('%2F');
   }
 
+  /// Abre el selector nativo de carpetas de Android (ACTION_OPEN_DOCUMENT_TREE)
+  /// y devuelve el URI SAF del árbol seleccionado (content://.../tree/...) o null.
+  static Future<String?> pickTreeUri() async {
+    if (!isSupported) return null;
+    try {
+      return await _channel.invokeMethod<String>('pickTree');
+    } catch (e) {
+      debugPrint('[SafFolderImport] pickTreeUri falló: $e');
+      return null;
+    }
+  }
+
   /// Verdadero si la app tiene permiso runtime para acceder a los archivos de audio
   /// del dispositivo (READ_MEDIA_AUDIO en Android 13+, READ_EXTERNAL_STORAGE en
   /// Android 6 a 12, o concedido por defecto en versiones anteriores).

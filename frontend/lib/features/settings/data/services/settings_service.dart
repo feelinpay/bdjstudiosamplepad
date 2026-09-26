@@ -4,6 +4,7 @@ import '../../../../core/platform/device_tier.dart';
 
 class SettingsService {
   static const _keyAudioOutputDeviceId = 'audio_output_device_id';
+  static const _keyAudioOutputDeviceName = 'audio_output_device_name';
   static const _keySoundCacheCapacity = 'sound_cache_capacity';
   late SharedPreferences _prefs;
 
@@ -45,12 +46,35 @@ class SettingsService {
   Future<void> setFontScale(double value) =>
       _prefs.setDouble(_keyFontScale, value);
 
+  String? get audioOutputDeviceName => _prefs.getString(_keyAudioOutputDeviceName);
+  Future<void> setAudioOutputDeviceName(String? value) async {
+    if (value == null) {
+      await _prefs.remove(_keyAudioOutputDeviceName);
+    } else {
+      await _prefs.setString(_keyAudioOutputDeviceName, value);
+    }
+  }
+
   int? get audioOutputDeviceId => _prefs.getInt(_keyAudioOutputDeviceId);
   Future<void> setAudioOutputDeviceId(int? value) async {
     if (value == null) {
       await _prefs.remove(_keyAudioOutputDeviceId);
     } else {
       await _prefs.setInt(_keyAudioOutputDeviceId, value);
+    }
+  }
+
+  /// Migración automática de índice de dispositivo heredado a nombre persistente.
+  Future<void> migrateLegacyAudioDevice(List<dynamic> availableDevices) async {
+    if (audioOutputDeviceName != null) return;
+    final legacyId = audioOutputDeviceId;
+    if (legacyId == null || legacyId == -1) return;
+    for (final dev in availableDevices) {
+      if (dev.id == legacyId && dev.name != null && (dev.name as String).isNotEmpty) {
+        await setAudioOutputDeviceName(dev.name as String);
+        await _prefs.remove(_keyAudioOutputDeviceId);
+        break;
+      }
     }
   }
 

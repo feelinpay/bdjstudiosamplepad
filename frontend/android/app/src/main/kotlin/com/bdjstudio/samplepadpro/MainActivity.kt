@@ -19,6 +19,7 @@ import java.util.concurrent.Executors
 class MainActivity : FlutterActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val safExecutor = Executors.newSingleThreadExecutor()
+    private var pendingTreeResult: MethodChannel.Result? = null
 
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -83,6 +84,56 @@ class MainActivity : FlutterActivity() {
                     if (!dir.isNullOrEmpty()) SafTreeImporter.cleanup(dir)
                     result.success(null)
                 }
+                "listAudioFolders" -> {
+                    safExecutor.execute {
+                        try {
+                            val folders = MediaStoreAudioBrowser.listAudioFolders(applicationContext)
+                            mainHandler.post { result.success(folders) }
+                        } catch (e: Exception) {
+                            mainHandler.post {
+                                result.error("list_failed", e.message ?: "Error listando carpetas de audio", null)
+                            }
+                        }
+                    }
+                }
+                "listAudioFiles" -> {
+                    val folderPath = call.argument<String>("folderPath") ?: ""
+                    val recursive = call.argument<Boolean>("recursive") ?: true
+                    safExecutor.execute {
+                        try {
+                            val files = MediaStoreAudioBrowser.listAudioFiles(applicationContext, folderPath, recursive)
+                            mainHandler.post { result.success(files) }
+                        } catch (e: Exception) {
+                            mainHandler.post {
+                                result.error("list_files_failed", e.message ?: "Error listando audios", null)
+                            }
+                        }
+                    }
+                }
+                "copyAudioFiles" -> {
+                    val items = call.argument<List<Map<String, Any>>>("items")
+                    val destDir = call.argument<String>("destDir")
+                    if (items.isNullOrEmpty() || destDir.isNullOrEmpty()) {
+                        result.error("bad_args", "items y destDir requeridos", null)
+                        return@setMethodCallHandler
+                    }
+                    safExecutor.execute {
+                        try {
+                            val copied = MediaStoreAudioBrowser.copyAudioFiles(
+                                applicationContext,
+                                items,
+                                destDir,
+                            ) { progress ->
+                                mainHandler.post { safChannel.invokeMethod("onProgress", progress) }
+                            }
+                            mainHandler.post { result.success(copied) }
+                        } catch (e: Exception) {
+                            mainHandler.post {
+                                result.error("copy_failed", e.message ?: "Error copiando audios", null)
+                            }
+                        }
+                    }
+                }
                 "isAllFilesAccessGranted" -> result.success(isDirectStorageAccessGranted())
                 "requestAllFilesAccess" -> {
                     try {
@@ -103,6 +154,25 @@ class MainActivity : FlutterActivity() {
                         result.error("settings_failed", e.message, null)
                     }
                 }
+                "pickTree" -> {
+                    if (pendingTreeResult != null) {
+                        result.error("in_progress", "Ya hay una selección de carpeta en curso", null)
+                        return@setMethodCallHandler
+                    }
+                    pendingTreeResult = result
+                    try {
+                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                            addFlags(
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+                            )
+                        }
+                        startActivityForResult(intent, PICK_TREE_REQUEST_CODE)
+                    } catch (e: Exception) {
+                        pendingTreeResult = null
+                        result.error("picker_failed", e.message ?: "No se pudo abrir el selector de carpetas", null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -110,6 +180,7 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val STORAGE_REQUEST_CODE = 4103
+        private const val PICK_TREE_REQUEST_CODE = 4104
     }
 
     /**
@@ -161,6 +232,22 @@ class MainActivity : FlutterActivity() {
                 permissions,
                 STORAGE_REQUEST_CODE,
             )
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == PICK_TREE_REQUEST_CODE) {
+            val pending = pendingTreeResult
+            pendingTreeResult = null
+            if (pending != null) {
+                if (resultCode == RESULT_OK && data?.data != null) {
+                    val treeUri = data.data!!
+                    pending.success(treeUri.toString())
+                } else {
+                    pending.success(null)
+                }
+            }
         }
     }
 

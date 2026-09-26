@@ -21,13 +21,17 @@ class AudioBootstrapper {
   static Future<AudioInitializationResult> start(
     AudioEnginePort audioEngine,
     int? savedDeviceId, {
+    String? savedDeviceName,
     MixerSettingsService? mixerSettingsService,
     void Function(double volume)? onMasterVolumeLoaded,
   }) async {
     StartupTimeline.mark('audio_start');
     try {
       final result = await audioEngine
-          .initializeAndRestoreDevice(savedDeviceId)
+          .initializeAndRestoreDevice(
+            savedDeviceId,
+            savedDeviceName: savedDeviceName,
+          )
           .timeout(
         const Duration(seconds: 30),
         onTimeout: () {

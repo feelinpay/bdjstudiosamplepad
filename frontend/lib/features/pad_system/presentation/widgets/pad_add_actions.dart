@@ -8,11 +8,14 @@ import '../providers/pad_providers.dart';
 import '../../../../core/services/filesystem_sync_service.dart';
 import '../../../../core/services/local_audio_storage_service.dart';
 import '../../../../core/services/saf_folder_import_service.dart';
+import '../../../../core/services/crash_log_service.dart';
 import '../../../../core/utils/concurrency_shield.dart';
 import '../../../../core/widgets/blocking_progress_dialog.dart';
 import '../../../../core/providers/database_provider.dart';
 import '../../../workspace/presentation/providers/workspace_providers.dart';
 import '../../../workspace/data/models/workspace_model.dart';
+import '../../../../core/widgets/app_snack.dart';
+import '../screens/device_audio_browser_screen.dart';
 
 /// Acciones compartidas del boton [+]: agregar N pads, crear carpeta,
 /// o importar varios audios de golpe (cada archivo crea su pad).
@@ -117,42 +120,102 @@ class PadAddActions {
                   ),
                 ),
               ),
-              ListTile(
-                leading: const Icon(
-                  Icons.audio_file,
-                  color: Colors.greenAccent,
+              if (Platform.isAndroid) ...[
+                ListTile(
+                  leading: const Icon(
+                    Icons.phone_android_rounded,
+                    color: Colors.cyanAccent,
+                  ),
+                  title: const Text(
+                    'Desde el dispositivo (recomendado)',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  subtitle: const Text(
+                    'Explora carpetas con audios en Descargas, WhatsApp, etc.',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                  onTap: () {
+                    ConcurrencyShield.safePop(ctx);
+                    _importFromDeviceMediaStore(context, ref);
+                  },
                 ),
-                title: const Text(
-                  'Importar archivos de audio',
-                  style: TextStyle(color: Colors.white),
+                ListTile(
+                  leading: const Icon(
+                    Icons.folder_open_rounded,
+                    color: Colors.amberAccent,
+                  ),
+                  title: const Text(
+                    'Elegir carpeta… (selector SAF)',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  subtitle: const Text(
+                    'Para carpetas externas o con .nomedia',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                  onTap: () {
+                    ConcurrencyShield.safePop(ctx);
+                    _importAudioFolder(context, ref);
+                  },
                 ),
-                subtitle: const Text(
-                  'Selecciona archivos MP3, WAV, FLAC, OGG...',
-                  style: TextStyle(color: Colors.grey),
+                ListTile(
+                  leading: const Icon(
+                    Icons.audio_file_rounded,
+                    color: Colors.greenAccent,
+                  ),
+                  title: const Text(
+                    'Elegir audios…',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  subtitle: const Text(
+                    'Selección múltiple de archivos individuales o nubes',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                  onTap: () {
+                    ConcurrencyShield.safePop(ctx);
+                    importAudios(context, ref);
+                  },
                 ),
-                onTap: () {
-                  ConcurrencyShield.safePop(ctx);
-                  importAudios(context, ref);
-                },
-              ),
-              ListTile(
-                leading: const Icon(
-                  Icons.folder_copy_rounded,
-                  color: Colors.amberAccent,
+              ] else ...[
+                ListTile(
+                  leading: const Icon(
+                    Icons.folder_copy_rounded,
+                    color: Colors.amberAccent,
+                  ),
+                  title: const Text(
+                    'Importar carpeta de audios',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  subtitle: const Text(
+                    'Escanea e importa una carpeta completa con subcarpetas',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                  onTap: () {
+                    ConcurrencyShield.safePop(ctx);
+                    _importAudioFolder(context, ref);
+                  },
                 ),
-                title: const Text(
-                  'Importar carpeta de audios',
-                  style: TextStyle(color: Colors.white),
+                ListTile(
+                  leading: const Icon(
+                    Icons.audio_file,
+                    color: Colors.greenAccent,
+                  ),
+                  title: const Text(
+                    'Importar archivos de audio',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  subtitle: const Text(
+                    'Selecciona archivos MP3, WAV, FLAC, OGG...',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                  onTap: () {
+                    ConcurrencyShield.safePop(ctx);
+                    importAudios(context, ref);
+                  },
                 ),
-                subtitle: const Text(
-                  'Escanea e importa una carpeta completa con subcarpetas',
-                  style: TextStyle(color: Colors.grey),
-                ),
-                onTap: () {
-                  ConcurrencyShield.safePop(ctx);
-                  _importAudioFolder(context, ref);
-                },
-              ),
+              ],
             ],
           ),
         ),
@@ -480,6 +543,43 @@ class PadAddActions {
   /// completa de subcarpetas para recrearla jerárquicamente como carpetas de pads.
   /// En Android el árbol SAF se copia al cache vía DocumentsContract porque
   /// Scoped Storage bloquea Directory.list() sobre almacenamiento compartido.
+  /// Importa audios desde carpetas del dispositivo usando MediaStore (Android).
+  /// Permite acceder a la raíz de Descargas, WhatsApp, etc. sin depender del selector SAF.
+  static Future<void> _importFromDeviceMediaStore(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    if (ConcurrencyShield.isMutexLocked('import_audio_folder')) {
+      if (context.mounted) {
+        AppSnack.show(
+          context,
+          'Ya hay una importación en curso. Espera a que termine.',
+          duration: const Duration(seconds: 3),
+        );
+      }
+      return;
+    }
+
+    await ConcurrencyShield.run('import_audio_folder', () async {
+      final result = await DeviceAudioBrowserScreen.open(
+        context,
+        title: 'Audios en el dispositivo',
+        actionLabel: 'Importar audios',
+      );
+      if (result == null || !context.mounted) return;
+
+      try {
+        await _confirmAndImportTree(context, ref, result.folderNode);
+      } finally {
+        try {
+          if (await result.stagingDirectory.exists()) {
+            await result.stagingDirectory.delete(recursive: true);
+          }
+        } catch (_) {}
+      }
+    });
+  }
+
   static Future<void> _importAudioFolder(
     BuildContext context,
     WidgetRef ref,
@@ -489,13 +589,10 @@ class PadAddActions {
     if (ConcurrencyShield.isMutexLocked('import_audio_folder')) {
       debugPrint('BDJ Import Log: import_audio_folder ya en curso → aviso');
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Ya hay una importación en curso. Espera a que termine.',
-            ),
-            duration: Duration(seconds: 3),
-          ),
+        AppSnack.show(
+          context,
+          'Ya hay una importación en curso. Espera a que termine.',
+          duration: const Duration(seconds: 3),
         );
       }
       return;
@@ -519,7 +616,6 @@ class PadAddActions {
       // === Desktop (Windows/macOS/Linux): usar selector de carpeta + scan ===
       while (true) {
         if (!context.mounted) return;
-        final scaffold = ScaffoldMessenger.of(context);
         String? dirPath;
         try {
           await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -541,11 +637,10 @@ class PadAddActions {
 
         if (!context.mounted) break;
         debugPrint('BDJ import: carpeta seleccionada: $dirPath');
-        scaffold.showSnackBar(
-          const SnackBar(
-            content: Text('Carpeta seleccionada. Analizando audios...'),
-            duration: Duration(seconds: 2),
-          ),
+        AppSnack.show(
+          context,
+          'Carpeta seleccionada. Analizando audios...',
+          duration: const Duration(seconds: 2),
         );
         var scanningDialogOpen = true;
         _showScanningDialog(context);
@@ -564,13 +659,10 @@ class PadAddActions {
 
           if (rootNode.totalAudioCount == 0) {
             if (!context.mounted) break;
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'No se encontraron archivos de audio en esta carpeta.',
-                ),
-                duration: Duration(seconds: 3),
-              ),
+            AppSnack.show(
+              context,
+              'No se encontraron archivos de audio en esta carpeta.',
+              duration: const Duration(seconds: 3),
             );
             break;
           } else {
@@ -709,20 +801,26 @@ class PadAddActions {
         await WidgetsBinding.instance.endOfFrame;
         if (!context.mounted) return;
         debugPrint('BDJ Import Log: abriendo selector de carpeta...');
-        pickedPath =
-            await FilePicker.getDirectoryPath(
-              dialogTitle: 'Selecciona una carpeta de audios',
-            ).timeout(
-              // Evita que un resultado de actividad perdido deje el mutex
-              // trabado para siempre (los toques siguientes morían en silencio).
-              const Duration(minutes: 5),
-              onTimeout: () {
-                debugPrint('BDJ Import Log: selector timeout (5 min) → null');
-                return null;
-              },
-            );
+        if (Platform.isAndroid) {
+          CrashLogService.log('[PadAddActions] Solicitando selector SAF ACTION_OPEN_DOCUMENT_TREE');
+          pickedPath = await SafFolderImportService.pickTreeUri();
+          CrashLogService.log('[PadAddActions] Selector SAF devolvió: $pickedPath');
+        }
+        if (pickedPath == null && !Platform.isAndroid) {
+          pickedPath =
+              await FilePicker.getDirectoryPath(
+                dialogTitle: 'Selecciona una carpeta de audios',
+              ).timeout(
+                const Duration(minutes: 5),
+                onTimeout: () {
+                  debugPrint('BDJ Import Log: selector timeout (5 min) → null');
+                  return null;
+                },
+              );
+        }
       } on Object catch (error) {
         debugPrint('BDJ Import Log Error in getDirectoryPath: $error');
+        CrashLogService.log('[PadAddActions] Error al abrir selector de carpeta: $error');
         pickedPath = null;
       }
       debugPrint('BDJ Import Log: getDirectoryPath result = $pickedPath');
@@ -732,16 +830,15 @@ class PadAddActions {
       final resolved = await LocalAudioStorageService.resolveContentUriToPath(
         pickedPath,
       );
-      debugPrint(
-        'BDJ Import Log: resolved=$resolved treeLike=$treeLike directGranted=$directGranted',
+      CrashLogService.log(
+        '[PadAddActions] Carpeta seleccionada: pickedPath=$pickedPath, resolved=$resolved, treeLike=$treeLike, directGranted=$directGranted',
       );
 
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Carpeta seleccionada. Analizando audios...'),
-          duration: Duration(seconds: 2),
-        ),
+      AppSnack.show(
+        context,
+        'Carpeta seleccionada. Analizando audios...',
+        duration: const Duration(seconds: 2),
       );
 
       AudioFolderNode? rootNode;
@@ -770,14 +867,11 @@ class PadAddActions {
 
       if (totalAudios == 0 || rootNode == null) {
         if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'No se encontraron archivos de audio compatibles (MP3, WAV, FLAC, OGG...) '
-              'en la carpeta ni en sus subcarpetas.',
-            ),
-            duration: Duration(seconds: 4),
-          ),
+        AppSnack.show(
+          context,
+          'No se encontraron archivos de audio compatibles (MP3, WAV, FLAC, OGG...) '
+          'en la carpeta ni en sus subcarpetas.',
+          duration: const Duration(seconds: 4),
         );
         return;
       }
@@ -989,13 +1083,10 @@ class PadAddActions {
           (ws) => ws.name.toLowerCase() == requestedName.toLowerCase(),
         )) {
           if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Ya existe un workspace llamado "$requestedName".',
-                ),
-                duration: const Duration(seconds: 2),
-              ),
+            AppSnack.show(
+              context,
+              'Ya existe un workspace llamado "$requestedName".',
+              duration: const Duration(seconds: 2),
             );
           }
           return;
@@ -1009,11 +1100,10 @@ class PadAddActions {
         }
         if (ws == null) {
           if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('No se pudo crear el workspace.'),
-                duration: Duration(seconds: 2),
-              ),
+            AppSnack.show(
+              context,
+              'No se pudo crear el workspace.',
+              duration: const Duration(seconds: 2),
             );
           }
           return;
@@ -1022,11 +1112,10 @@ class PadAddActions {
         // Use safe workspace switching with request ID
         await switchWorkspaceWithRequestId(ref, ws.id);
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Workspace "${ws.name}" creado correctamente'),
-              duration: const Duration(seconds: 2),
-            ),
+          AppSnack.show(
+            context,
+            'Workspace "${ws.name}" creado correctamente',
+            duration: const Duration(seconds: 2),
           );
         }
       }

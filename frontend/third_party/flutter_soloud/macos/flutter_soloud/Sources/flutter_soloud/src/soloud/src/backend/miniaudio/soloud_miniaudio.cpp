@@ -545,6 +545,56 @@ namespace SoLoud
         return 0;
     }
 
+    static ma_result init_and_start_device(ma_device_id *pDeviceID)
+    {
+        ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
+        deviceConfig.playback.pDeviceID = pDeviceID;
+        deviceConfig.periodSizeInFrames = soloud->mBufferSize;
+        deviceConfig.playback.format    = ma_format_f32;
+        deviceConfig.playback.channels  = soloud->mChannels;
+        deviceConfig.sampleRate         = soloud->mSamplerate;
+        deviceConfig.dataCallback       = soloud_miniaudio_audiomixer;
+        deviceConfig.pUserData          = (void *)soloud;
+        deviceConfig.notificationCallback = on_notification;
+
+        deviceConfig.performanceProfile = gMiniaudioLowLatency
+            ? ma_performance_profile_low_latency
+            : ma_performance_profile_conservative;
+#if defined(__ANDROID__)
+        if (!gMiniaudioLowLatency)
+        {
+            deviceConfig.aaudio.usage                = gMiniaudioAAudioUsage;
+            deviceConfig.aaudio.contentType          = gMiniaudioAAudioContentType;
+            deviceConfig.aaudio.allowedCapturePolicy = ma_aaudio_allow_capture_by_all;
+        }
+#endif
+
+        ma_result result;
+#if defined(MA_HAS_COREAUDIO) || defined(__ANDROID__)
+        result = ma_device_init(&context, &deviceConfig, &gDevice);
+#else
+        result = ma_device_init(NULL, &deviceConfig, &gDevice);
+#endif
+        if (result != MA_SUCCESS)
+        {
+            gDeviceInitialized = false;
+            return result;
+        }
+
+        gDeviceInitialized = true;
+        gDeviceStopped = false;
+        ma_result startResult = ma_device_start(&gDevice);
+        if (startResult != MA_SUCCESS)
+        {
+            soloud_platform_log("init_and_start_device: ma_device_start failed with error %d\n", startResult);
+            ma_device_uninit(&gDevice);
+            gDeviceInitialized = false;
+            return startResult;
+        }
+
+        return MA_SUCCESS;
+    }
+
     result miniaudio_changeDevice_impl(void *pPlaybackInfos_id)
     {
         if (soloud == nullptr)
@@ -559,69 +609,40 @@ namespace SoLoud
         // Lock the audio mutex to prevent race conditions during device change
         soloud->lockAudioMutex_internal();
 
-        ma_device_uninit(&gDevice);
-        gDeviceInitialized = false;
-
-        ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
-        deviceConfig.playback.pDeviceID = (ma_device_id *)pPlaybackInfos_id;
-        deviceConfig.periodSizeInFrames = soloud->mBufferSize;
-        deviceConfig.playback.format    = ma_format_f32;
-        deviceConfig.playback.channels  = soloud->mChannels;
-        deviceConfig.sampleRate         = soloud->mSamplerate;
-        deviceConfig.dataCallback       = soloud_miniaudio_audiomixer;
-        deviceConfig.pUserData          = (void *)soloud;
-        deviceConfig.notificationCallback = on_notification;
-
-        // Preserve the performance profile chosen at init across device changes,
-        // otherwise switching the output device would silently revert to the
-        // default low-latency/MMAP path (see gMiniaudioLowLatency).
-        deviceConfig.performanceProfile = gMiniaudioLowLatency
-            ? ma_performance_profile_low_latency
-            : ma_performance_profile_conservative;
-#if defined(__ANDROID__)
-        if (!gMiniaudioLowLatency)
+        bool hadOldDevice = gDeviceInitialized;
+        ma_device_id oldDeviceId;
+        if (hadOldDevice)
         {
-            // Re-apply the SAME attributes chosen at init so a device change
-            // doesn't silently revert them. If the app opted out
-            // (miniaudio_setAndroidAAudioAttributes(false)), these are `_default`
-            // and miniaudio leaves them unset — so an externally-managed
-            // configuration (e.g. via audio_session) is preserved across device
-            // changes rather than being forced back to media/music.
-            deviceConfig.aaudio.usage                = gMiniaudioAAudioUsage;
-            deviceConfig.aaudio.contentType          = gMiniaudioAAudioContentType;
-            deviceConfig.aaudio.allowedCapturePolicy = ma_aaudio_allow_capture_by_all;
-        }
-#endif
-
-        ma_result result;
-#if defined(MA_HAS_COREAUDIO) || defined(__ANDROID__)
-        // Use the existing context on CoreAudio (macOS/iOS) and Android
-        // to preserve session/category settings
-        result = ma_device_init(&context, &deviceConfig, &gDevice);
-#else
-        // On other platforms, use NULL context (default behavior)
-        result = ma_device_init(NULL, &deviceConfig, &gDevice);
-#endif
-        if (result != MA_SUCCESS)
-        {
-            gDeviceInitialized = false;
-            soloud->unlockAudioMutex_internal();
-            return UNKNOWN_ERROR;
+            memcpy(&oldDeviceId, &gDevice.playback.id, sizeof(ma_device_id));
         }
 
-        gDeviceInitialized = true;
-        gDeviceStopped = false;  // Device is about to start
-        ma_result startResult = ma_device_start(&gDevice);
-        if (startResult != MA_SUCCESS) {
-            soloud_platform_log("miniaudio_changeDevice_impl: ma_device_start failed with error %d\n", startResult);
+        if (gDeviceInitialized)
+        {
             ma_device_uninit(&gDevice);
             gDeviceInitialized = false;
+        }
+
+        ma_result targetResult = init_and_start_device((ma_device_id *)pPlaybackInfos_id);
+        if (targetResult != MA_SUCCESS)
+        {
+            soloud_platform_log("miniaudio_changeDevice_impl: target device failed with error %d. Rolling back...\n", targetResult);
+            ma_result fallbackResult = MA_ERROR;
+            if (hadOldDevice)
+            {
+                fallbackResult = init_and_start_device(&oldDeviceId);
+            }
+            if (fallbackResult != MA_SUCCESS)
+            {
+                soloud_platform_log("miniaudio_changeDevice_impl: restoring old device failed, opening default device...\n");
+                init_and_start_device(NULL);
+            }
+
             soloud->unlockAudioMutex_internal();
-            return UNKNOWN_ERROR;
+            return (result)targetResult;
         }
 
         soloud->unlockAudioMutex_internal();
-        return 0;
+        return 0; // SO_NO_ERROR
     }
 };
 #endif

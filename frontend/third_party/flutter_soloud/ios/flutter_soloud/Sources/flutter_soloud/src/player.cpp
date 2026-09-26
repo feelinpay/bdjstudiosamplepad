@@ -258,13 +258,14 @@ PlayerErrors Player::changeDevice(int deviceID)
     // Use the stored device ID from the PlaybackDevice struct
     void *playbackInfos_id = (void *)&devices[deviceID].deviceId;
 
-    SoLoud::result result = soloud.miniaudio_changeDevice(playbackInfos_id);
+    int result = (int)soloud.miniaudio_changeDevice(playbackInfos_id);
 
-    // miniaudio_changeDevice can only throw UNKNOWN_ERROR. This means that
-    // for some reasons the device could not be changed (maybe the engine
-    // was turned off in the meantime?).
-    if (result != SoLoud::SO_NO_ERROR)
-        result = backendNotInited;
+    if (result != 0)
+    {
+        if (result == MA_BUSY || result == MA_ALREADY_IN_USE)
+            return deviceBusy;
+        return backendNotInited;
+    }
     return noError;
 }
 

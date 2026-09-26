@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../providers/support_providers.dart';
+import '../../../../core/widgets/app_snack.dart';
 
 /// Herramienta de diagnostico dentro de la app (Fase 14.2).
 class DiagnosticScreen extends ConsumerWidget {
@@ -56,11 +57,10 @@ class DiagnosticScreen extends ConsumerWidget {
                   onPressed: () async {
                     await Clipboard.setData(ClipboardData(text: r.toText()));
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          duration: const Duration(seconds: 2),
-                          content: Text('Reporte copiado al portapapeles'),
-                        ),
+                      AppSnack.show(
+                        context,
+                        'Reporte copiado al portapapeles',
+                        duration: const Duration(seconds: 2),
                       );
                     }
                   },

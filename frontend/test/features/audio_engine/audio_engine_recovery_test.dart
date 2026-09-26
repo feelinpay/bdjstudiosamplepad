@@ -1,8 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:bdj_studio_sample_pad/core/audio/audio_engine_state.dart';
 import 'package:bdj_studio_sample_pad/core/audio/audio_output_device.dart';
 import 'package:bdj_studio_sample_pad/core/audio/audio_initialization_result.dart';
 import 'package:bdj_studio_sample_pad/core/utils/concurrency_shield.dart';
+import 'package:bdj_studio_sample_pad/features/settings/data/services/settings_service.dart';
 
 import '../../helpers/mock_audio_engine.dart';
 import '../../../lib/features/settings/domain/audio_change_result.dart';
@@ -435,6 +437,124 @@ void main() {
       expect(result.userMessage!.toLowerCase(), isNot(contains('exception')));
       expect(result.userMessage!.toLowerCase(), isNot(contains('soloud')));
       engine.dispose();
+    });
+  });
+
+  group('Exclusive Mode (deviceBusy) and Name Persistence', () {
+    test('deviceBusy during selectOutputDevice preserves active device and sets descriptive error', () async {
+      final engine = MockAudioEngine();
+      engine.mockDevices = const [
+        AudioOutputDevice(id: 0, name: 'Speakers (Realtek)', isDefault: true),
+        AudioOutputDevice(id: 1, name: 'DDJ-FLX4', isDefault: false),
+      ];
+
+      await engine.initializeAndRestoreDevice(0);
+      expect(engine.mockCurrentDeviceId, 0);
+
+      // Simulate device is busy (e.g. Rekordbox using exclusive mode)
+      engine.simulateDeviceBusy = true;
+      await engine.selectOutputDevice(1);
+
+      // Active device must NOT change to 1
+      expect(engine.mockCurrentDeviceId, 0);
+      // Engine must remain ready (not broken/dead)
+      expect(engine.engineState, AudioEngineState.ready);
+      // Error message informs user about exclusive use with exact expected text
+      expect(
+        engine.lastErrorMessage,
+        '«DDJ-FLX4» está en uso exclusivo por otra aplicación (rekordbox, Serato, VirtualDJ). Se mantiene la salida anterior.',
+      );
+      engine.dispose();
+    });
+
+    test('deviceBusy during boot falls back to default device without leaving app mute', () async {
+      final engine = MockAudioEngine();
+      engine.mockDevices = const [
+        AudioOutputDevice(id: 0, name: 'Speakers (Realtek)', isDefault: true),
+        AudioOutputDevice(id: 1, name: 'DDJ-FLX4', isDefault: false),
+      ];
+      engine.simulateDeviceBusy = true;
+
+      final result = await engine.initializeAndRestoreDevice(1, savedDeviceName: 'DDJ-FLX4');
+      expect(result.state, AudioEngineState.ready);
+      expect(result.appliedDeviceId, 0);
+      expect(result.savedDeviceInvalid, isTrue);
+      expect(
+        result.userMessage,
+        '«DDJ-FLX4» está en uso exclusivo por otra aplicación (rekordbox, Serato, VirtualDJ). Se utiliza la salida predeterminada.',
+      );
+      engine.dispose();
+    });
+
+    test('device resolves correctly by name even if device IDs reorder', () async {
+      final engine = MockAudioEngine();
+      // Previously, DDJ-FLX4 had id 1. Now it is enumerated with id 3.
+      engine.mockDevices = const [
+        AudioOutputDevice(id: 0, name: 'Speakers (Realtek)', isDefault: true),
+        AudioOutputDevice(id: 2, name: 'Headphones', isDefault: false),
+        AudioOutputDevice(id: 3, name: 'DDJ-FLX4 WASAPI', isDefault: false),
+      ];
+
+      final result = await engine.initializeAndRestoreDevice(1, savedDeviceName: 'DDJ-FLX4 WASAPI');
+      expect(result.state, AudioEngineState.ready);
+      expect(result.appliedDeviceId, 3);
+      expect(result.savedDeviceInvalid, isFalse);
+      engine.dispose();
+    });
+
+    test('SettingsService migrates legacy device ID to device name', () async {
+      SharedPreferences.setMockInitialValues({
+        'audio_output_device_id': 2,
+      });
+      final prefs = await SharedPreferences.getInstance();
+      final settings = SettingsService.withPrefs(prefs);
+
+      expect(settings.audioOutputDeviceName, isNull);
+      expect(settings.audioOutputDeviceId, 2);
+
+      const devices = [
+        AudioOutputDevice(id: 0, name: 'Speakers', isDefault: true),
+        AudioOutputDevice(id: 2, name: 'DDJ-FLX4 WASAPI', isDefault: false),
+      ];
+
+      await settings.migrateLegacyAudioDevice(devices);
+
+      expect(settings.audioOutputDeviceName, 'DDJ-FLX4 WASAPI');
+      expect(settings.audioOutputDeviceId, isNull);
+    });
+
+    test('Windows USB port renumbering: (2- DDJ-FLX4) matches (3- DDJ-FLX4)', () async {
+      final engine = MockAudioEngine();
+      engine.mockDevices = const [
+        AudioOutputDevice(id: 0, name: 'Speakers (Realtek)', isDefault: true),
+        AudioOutputDevice(id: 4, name: 'Línea (3- DDJ-FLX4)', isDefault: false),
+      ];
+
+      // El usuario guardó "Línea (2- DDJ-FLX4)", pero Windows cambió el puerto a 3-
+      final result = await engine.initializeAndRestoreDevice(
+        1,
+        savedDeviceName: 'Línea (2- DDJ-FLX4)',
+      );
+      expect(result.state, AudioEngineState.ready);
+      expect(result.appliedDeviceId, 4);
+      expect(result.savedDeviceInvalid, isFalse);
+      expect(result.userMessage, isNull);
+      engine.dispose();
+    });
+
+    test('AudioOutputDevice.normalizeName strips Windows USB port prefixes and extra spaces', () {
+      expect(
+        AudioOutputDevice.normalizeName('Línea (2- DDJ-FLX4)'),
+        AudioOutputDevice.normalizeName('Línea (3- DDJ-FLX4)'),
+      );
+      expect(
+        AudioOutputDevice.normalizeName('Línea (2- DDJ-FLX4)'),
+        AudioOutputDevice.normalizeName('Línea (DDJ-FLX4)'),
+      );
+      expect(
+        AudioOutputDevice.normalizeName('2- DDJ-FLX4'),
+        AudioOutputDevice.normalizeName('3- DDJ-FLX4'),
+      );
     });
   });
 }

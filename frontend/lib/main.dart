@@ -17,6 +17,7 @@ import 'core/services/app_storage_service.dart';
 import 'core/platform/device_tier.dart';
 import 'core/platform/storage_permission_gate.dart';
 import 'core/widgets/brand_logo.dart';
+import 'core/widgets/app_snack.dart';
 import 'features/audio_engine/data/soloud_audio_engine.dart';
 import 'core/theme/app_theme.dart';
 import 'features/pad_system/presentation/pages/main_pad_page.dart';
@@ -457,11 +458,10 @@ class _StartupScreen extends StatelessWidget {
                             final report = await CrashLogService.generateDiagnosticReport();
                             await Clipboard.setData(ClipboardData(text: report));
                             if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Diagnóstico copiado al portapapeles.'),
-                                  backgroundColor: Colors.deepPurpleAccent,
-                                ),
+                              AppSnack.show(
+                                context,
+                                'Diagnóstico copiado al portapapeles.',
+                                backgroundColor: Colors.deepPurpleAccent,
                               );
                             }
                           },
@@ -507,20 +507,24 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       StartupTimeline.mark('firstAppFrame');
       final engine = _engine;
-      final saved = ref.read(settingsServiceProvider).audioOutputDeviceId;
+      final settings = ref.read(settingsServiceProvider);
+      final savedId = settings.audioOutputDeviceId;
+      final savedName = settings.audioOutputDeviceName;
       final mixer = ref.read(mixerSettingsServiceProvider);
       AudioBootstrapper.start(
         engine,
-        saved,
+        savedId,
+        savedDeviceName: savedName,
         mixerSettingsService: mixer,
         onMasterVolumeLoaded: (vol) {
           if (mounted) {
             ref.read(masterVolumeProvider.notifier).state = vol;
           }
         },
-      ).then((result) {
+      ).then((result) async {
         if (mounted) {
           ref.read(audioInitializationCacheProvider.notifier).state = result;
+          await settings.migrateLegacyAudioDevice(result.devices);
         }
       });
       ref.read(librarySyncProvider.future).then((changed) {
@@ -530,19 +534,11 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
       });
       if (ConfigBackupService.lastRestoreRolledBack) {
         ConfigBackupService.lastRestoreRolledBack = false;
-        rootScaffoldMessengerKey.currentState?.showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 7),
-            backgroundColor: Color(0xFFE65100),
-            content: Text(
-              'El respaldo no se pudo aplicar. Tu proyecto anterior sigue intacto.',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 14,
-              ),
-            ),
-          ),
+        AppSnack.show(
+          rootScaffoldMessengerKey.currentState,
+          'El respaldo no se pudo aplicar. Tu proyecto anterior sigue intacto.',
+          duration: const Duration(seconds: 7),
+          backgroundColor: const Color(0xFFE65100),
         );
       }
     });
@@ -574,6 +570,11 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
 
     return MaterialApp(
       scaffoldMessengerKey: rootScaffoldMessengerKey,
+      navigatorObservers: [
+        SnackBarDismissNavigatorObserver(
+          scaffoldMessengerKey: rootScaffoldMessengerKey,
+        ),
+      ],
       title: 'BDJ Studio Sample Pad',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,

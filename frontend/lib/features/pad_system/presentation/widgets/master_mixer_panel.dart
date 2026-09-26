@@ -8,6 +8,7 @@ import '../../../../core/providers/core_providers.dart';
 import '../../../../core/providers/ui_providers.dart';
 import '../../../midi/presentation/providers/midi_providers.dart';
 import '../../../midi/domain/entities/midi_mapping_entity.dart';
+import '../../../../core/widgets/app_snack.dart';
 
 class MasterMixerPanel extends ConsumerStatefulWidget {
   const MasterMixerPanel({super.key});
@@ -107,11 +108,10 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
     engine.setMasterEQ(lowGain: 0.0, midGain: 0.0, highGain: 0.0);
     await ref.read(mixerSettingsServiceProvider).save(const MixerSettings());
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Master Mixer restablecido'),
-          duration: Duration(seconds: 2),
-        ),
+      AppSnack.show(
+        context,
+        'Master Mixer restablecido',
+        duration: const Duration(seconds: 2),
       );
     }
   }
@@ -515,11 +515,10 @@ class _MasterMixerPanelState extends ConsumerState<MasterMixerPanel>
                     actionType: MidiActionType.masterFx,
                     actionValue: midiActionValue,
                   );
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Mueve el Knob/Fader MIDI para $label...'),
-                      duration: const Duration(seconds: 4),
-                    ),
+                  AppSnack.show(
+                    context,
+                    'Mueve el Knob/Fader MIDI para $label...',
+                    duration: const Duration(seconds: 4),
                   );
                 },
               ),
