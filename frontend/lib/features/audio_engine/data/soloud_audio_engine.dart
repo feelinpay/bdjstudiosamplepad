@@ -807,16 +807,24 @@ class SoLoudAudioEngine implements AudioEnginePort {
         mode = LoadMode.memory;
       }
 
-      final estimatedBytes =
-          AudioDurationEstimator.estimateSoundMemoryBytes(estimatedDuration, mode);
-      _sourceBytesExpando[source] = estimatedBytes;
+      Duration? actualDuration;
+      if (mode == LoadMode.memory && _soloud != null) {
+        try {
+          actualDuration = _soloud!.getLength(source);
+        } catch (_) {}
+      }
+      final soundBytes = AudioDurationEstimator.estimateSoundMemoryBytes(
+        actualDuration ?? estimatedDuration,
+        mode,
+      );
+      _sourceBytesExpando[source] = soundBytes;
 
       _loadedModes[id] = mode;
       _loadedSounds.put(id, source);
       _loadedPaths[id] = resolvedPath;
       _activeHandles[id] = [];
       AudioLog.log(
-        '[SoLoud] loadAudio: SUCCESS id=$id mode=$mode bytes=$estimatedBytes cacheSize=${_loadedSounds.length} totalWeight=${_loadedSounds.totalWeight}',
+        '[SoLoud] loadAudio: SUCCESS id=$id mode=$mode bytes=$soundBytes cacheSize=${_loadedSounds.length} totalWeight=${_loadedSounds.totalWeight}',
       );
     } catch (e) {
       debugPrint('[SoLoud] loadAudio: ERROR id=$id: $e');

@@ -402,13 +402,25 @@ void main() {
       final cappedDate = initialCheck.add(const Duration(hours: 48));
       expect(securityPort.storage[LicenseStorageKeys.lastLicenseCheckUtc], equals(cappedDate.toIso8601String()));
 
-      // 2. El usuario corrige la hora a la fecha real (ej. 3 días después de la inicial: initialCheck + 72h)
-      simulatedTime = initialCheck.add(const Duration(hours: 72));
-      final valResultCorrected = await timedManager.validateLicense();
+      // 2. El usuario corrige la hora inmediatamente a la fecha real (initialCheck + 10m).
+      // Al ser now < cappedDate (lastCheck + 48h), el sistema bloquea con ClockFailure
+      // acotado a un máximo de ~48 horas (pantalla clockError informativa).
+      simulatedTime = initialCheck.add(const Duration(minutes: 10));
+      final valResultBlocked = await timedManager.validateLicense();
+      expect(valResultBlocked.isLeft(), isTrue);
+      valResultBlocked.fold(
+        (failure) {
+          expect(failure, isA<ClockFailure>());
+          expect(failure.message, contains('retrocedió de forma anormal'));
+        },
+        (_) => fail('Deberia fallar con ClockFailure durante la ventana acotada de 48h'),
+      );
 
-      // Debe ser VÁLIDA: no queda bloqueada por un supuesto retroceso de 5 años
-      expect(valResultCorrected.isRight(), isTrue);
-      expect(valResultCorrected.toOption().toNullable()?.status, equals(LicenseStatus.active));
+      // 3. Cuando el tiempo real alcanza now >= lastCheck + 48h - 5m, la licencia se desbloquea:
+      simulatedTime = cappedDate;
+      final valResultUnlocked = await timedManager.validateLicense();
+      expect(valResultUnlocked.isRight(), isTrue);
+      expect(valResultUnlocked.toOption().toNullable()?.status, equals(LicenseStatus.active));
     });
   });
 }
