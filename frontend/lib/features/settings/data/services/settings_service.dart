@@ -58,6 +58,12 @@ class SettingsService {
   /// dispositivo (25 sonidos en gama baja vs 100 en gama alta): mantener 100
   /// fuentes decodificadas en memoria en un equipo de 2 GB provoca presión de
   /// RAM y cierres por memoria.
+  static const _keyPerformanceProfile = 'performance_profile';
+  String get performanceProfile =>
+      _prefs.getString(_keyPerformanceProfile) ?? 'auto';
+  Future<void> setPerformanceProfile(String value) =>
+      _prefs.setString(_keyPerformanceProfile, value);
+
   int get soundCacheCapacity =>
       _prefs.getInt(_keySoundCacheCapacity) ??
       DeviceTierDetector.soundCacheCapacity;

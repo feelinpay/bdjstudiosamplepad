@@ -16,6 +16,10 @@ class DiagnosticReport {
   // Licencia
   final String licenseStatus;
 
+  // Rendimiento y Hardware
+  final String performanceProfile;
+  final String hardwareSignals;
+
   final DateTime generatedAt;
 
   const DiagnosticReport({
@@ -27,6 +31,8 @@ class DiagnosticReport {
     required this.latencyMs,
     required this.midiDevicesConnected,
     required this.licenseStatus,
+    required this.performanceProfile,
+    required this.hardwareSignals,
     required this.generatedAt,
   });
 
@@ -50,6 +56,10 @@ class DiagnosticReport {
     b.writeln('');
     b.writeln('[Licencia]');
     b.writeln('Estado: $licenseStatus');
+    b.writeln('');
+    b.writeln('[Rendimiento y Hardware]');
+    b.writeln('Perfil: $performanceProfile');
+    b.writeln('Señales: $hardwareSignals');
     return b.toString();
   }
 }

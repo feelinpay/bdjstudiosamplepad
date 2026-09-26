@@ -43,6 +43,10 @@ class DiagnosticScreen extends ConsumerWidget {
                 'Dispositivos conectados': '${r.midiDevicesConnected}',
               }),
               _section('Licencia', {'Estado': r.licenseStatus}),
+              _section('Rendimiento y Perfil', {
+                'Perfil resuelto': r.performanceProfile,
+                'Señales': r.hardwareSignals,
+              }),
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,

@@ -12,6 +12,8 @@ void main() {
       latencyMs: 2.67,
       midiDevicesConnected: 1,
       licenseStatus: 'Licencia activa',
+      performanceProfile: 'MID | RAM: 8.0 GB | Caché: 768 MB | Cargas: 2',
+      hardwareSignals: 'DeviceSignals(totalRam: 8192 MB, availRam: 4096 MB, cores: 4, sdk: 34, legacyGpu: false)',
       generatedAt: DateTime.parse('2026-07-21T10:00:00.000'),
     );
     var text = r.toText();
@@ -19,7 +21,9 @@ void main() {
     expect(text, contains('[Audio]'));
     expect(text, contains('[MIDI]'));
     expect(text, contains('[Licencia]'));
+    expect(text, contains('[Rendimiento y Hardware]'));
     expect(text, contains('128 samples @ 48000Hz'));
     expect(text, contains('Estado: Licencia activa'));
+    expect(text, contains('Perfil: MID'));
   });
 }

@@ -206,6 +206,11 @@ class CrashLogService {
 
     buffer.writeln('Sistema: ${Platform.operatingSystem} ${Platform.operatingSystemVersion}');
     buffer.writeln('DeviceTier: ${DeviceTierDetector.current.name}');
+    buffer.writeln('Perfil de rendimiento: ${DeviceTierDetector.profile.summary}');
+    final signals = DeviceTierDetector.signals;
+    if (signals != null) {
+      buffer.writeln('Señales de hardware: $signals');
+    }
 
     if (Platform.isAndroid) {
       try {

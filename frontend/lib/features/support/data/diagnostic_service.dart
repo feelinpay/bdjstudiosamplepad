@@ -1,4 +1,5 @@
 import 'dart:io' show Platform;
+import '../../../../core/platform/device_tier.dart';
 import '../domain/diagnostic_report.dart';
 
 /// Recolecta el estado del sistema para el reporte de diagnostico (Fase 14.2).
@@ -24,6 +25,8 @@ class DiagnosticService {
       latencyMs: latencyMs,
       midiDevicesConnected: midiCount,
       licenseStatus: licenseStatus,
+      performanceProfile: DeviceTierDetector.profile.summary,
+      hardwareSignals: DeviceTierDetector.signals?.toString() ?? 'N/D',
       generatedAt: DateTime.now(),
     );
   }

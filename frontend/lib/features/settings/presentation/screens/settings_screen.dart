@@ -22,6 +22,7 @@ import '../../../../core/constants/feature_flags.dart';
 import '../../../../core/widgets/blocking_progress_dialog.dart';
 import '../../../workspace/presentation/providers/workspace_providers.dart';
 import '../../../workspace/domain/services/project_importer.dart';
+import '../../../../core/platform/device_tier.dart';
 import '../providers/settings_provider.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -144,6 +145,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               style: TextStyle(fontSize: 11, color: Colors.white38),
             ),
             onTap: () => _selectCacheCapacity(context, ref),
+          ),
+          ListTile(
+            leading: const Icon(
+              Icons.speed_rounded,
+              color: Colors.cyanAccent,
+            ),
+            title: const Text('Perfil de rendimiento'),
+            subtitle: Text(
+              '${DeviceTierDetector.profile.summary}\n(Presupuesto se aplica en vivo; concurrencia y efectos al reiniciar)',
+              style: const TextStyle(fontSize: 11, color: Colors.white38),
+            ),
+            isThreeLine: true,
+            onTap: () => _selectPerformanceProfile(context, ref),
           ),
           const Divider(height: 28),
           const Text(
@@ -618,6 +632,57 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (selected == null || selected == settings.soundCacheCapacity) return;
     ref.read(audioEngineProvider).setSoundCacheCapacity(selected);
     await settings.setSoundCacheCapacity(selected);
+  }
+
+  Future<void> _selectPerformanceProfile(BuildContext context, WidgetRef ref) async {
+    final settings = ref.read(settingsServiceProvider);
+    final currentKey = settings.performanceProfile;
+    final options = [
+      (PerformanceOverride.auto, 'Automático (según hardware detectado)'),
+      (PerformanceOverride.powerSave, 'Ahorro (bajo consumo / gama baja)'),
+      (PerformanceOverride.balanced, 'Equilibrado (recomendado)'),
+      (PerformanceOverride.performance, 'Máximo (alta fidelidad y capacidad)'),
+    ];
+
+    final selected = await showDialog<PerformanceOverride>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('Perfil de rendimiento'),
+        children: [
+          ...options.map(
+            (opt) => SimpleDialogOption(
+              onPressed: () => Navigator.pop(dialogContext, opt.$1),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4.0),
+                child: Text(
+                  opt.$2,
+                  style: TextStyle(
+                    color: opt.$1.key == currentKey ? Colors.cyanAccent : null,
+                    fontWeight: opt.$1.key == currentKey
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (selected == null || selected.key == currentKey) return;
+    await settings.setPerformanceProfile(selected.key);
+    DeviceTierDetector.updateOverride(selected);
+    ref.read(audioEngineProvider).setSoundCacheCapacity(DeviceTierDetector.soundCacheCapacity);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Perfil cambiado a ${selected.label}. El presupuesto de memoria se actualizó.'),
+          backgroundColor: Colors.deepPurpleAccent,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   RadioListTile<int> _audioDeviceTile(
