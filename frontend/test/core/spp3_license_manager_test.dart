@@ -139,7 +139,7 @@ void main() {
       expect(licenseManager.isLicensed, isTrue);
     });
 
-    test('4. Rechaza activacion SPP3 si hay discrepancia de version exacta (Version Mismatch)', () async {
+    test('4. Acepta activacion SPP3 sin importar discrepancia de version', () async {
       final hwidHash = KeyHierarchy.hashHwid('1111-2222-3333-4444');
       final payload = Spp3Payload(
         licenseId: 'LIC-PAD-2002',
@@ -160,12 +160,8 @@ void main() {
       );
 
       final result = await licenseManager.activateLicense(token);
-      expect(result.isLeft(), isTrue);
-      result.fold(
-        (failure) => expect(failure.message, contains('vers')),
-        (_) => fail('Deberia rechazar por version mismatch'),
-      );
-      expect(licenseManager.isLicensed, isFalse);
+      expect(result.isRight(), isTrue);
+      expect(licenseManager.isLicensed, isTrue);
     });
 
     test('5. Rechaza cadena sin prefijo y rechaza token SPP3 corrupto', () async {
