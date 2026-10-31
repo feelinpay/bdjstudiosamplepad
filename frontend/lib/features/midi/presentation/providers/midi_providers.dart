@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
@@ -48,6 +49,7 @@ class MidiController {
   Map<String, MidiMappingModel>? _feedbackCache;
   bool _isBuildingCache = false;
   StreamSubscription? _midiSub;
+  StreamSubscription? _setupSub;
 
   MidiController(this.ref) {
     _listenToMidiData();
@@ -56,6 +58,8 @@ class MidiController {
   void dispose() {
     _midiSub?.cancel();
     _midiSub = null;
+    _setupSub?.cancel();
+    _setupSub = null;
   }
 
   Future<void> _buildFeedbackCache() async {
@@ -94,29 +98,51 @@ class MidiController {
 
   void _listenToMidiData() {
     var engine = ref.read(midiEngineProvider);
+    _setupSub?.cancel();
+    _setupSub = engine.onMidiSetupChanged.listen((_) {
+      ref.invalidate(midiDevicesProvider);
+    });
+
     _midiSub?.cancel();
     _midiSub = engine.onMidiMessageReceived.listen((
       MidiDataReceivedEvent event,
     ) {
       var data = event.message.data;
-      if (data.length >= 3) {
-        int status = data[0];
-        int noteOrCc = data[1];
-        int velocityOrValue = data[2];
+      if (data.isEmpty) return;
 
-        // Status 144 to 159 are Note On events
+      int i = 0;
+      while (i < data.length) {
+        int status = data[i];
+        // Ignorar bytes que no sean de estado (bit 7 en 0)
+        if (status < 0x80) {
+          i++;
+          continue;
+        }
+        // Mensajes de sistema / tiempo real (0xF0-0xFF)
+        if (status >= 0xF0) {
+          i++;
+          continue;
+        }
+        if (i + 2 >= data.length) break;
+
+        int noteOrCc = data[i + 1];
+        int velocityOrValue = data[i + 2];
+
+        // Status 144 a 159 (0x90-0x9F): Note On
         if (status >= 144 && status <= 159 && velocityOrValue > 0) {
           _handleMidiEvent(noteOrCc, status, velocityOrValue);
         }
-        // Status 176 to 191 are Control Change (CC)
+        // Status 176 a 191 (0xB0-0xBF): Control Change (CC)
         else if (status >= 176 && status <= 191) {
           _handleMidiEvent(noteOrCc, status, velocityOrValue);
         }
-        // Status 128 to 143 are Note Off, y un Note On con velocity 0
-        // también debe tratarse como Note Off para liberar pads gate/hold.
-        else if (status >= 128 && status <= 159) {
-          _handleMidiNoteOff(noteOrCc);
+        // Status 128 a 143 (0x80-0x8F): Note Off, o Note On con velocity 0
+        else if ((status >= 128 && status <= 143) ||
+            (status >= 144 && status <= 159 && velocityOrValue == 0)) {
+          _handleMidiNoteOff(noteOrCc, status);
         }
+
+        i += 3;
       }
     });
   }
@@ -132,7 +158,7 @@ class MidiController {
           ref.read(midiLearnActionProvider.notifier).state = null;
         }
       } else {
-        await _executeMapping(noteOrCc, value);
+        await _executeMapping(noteOrCc, status, value);
       }
     } catch (e) {
       // Captura silenciosa: errores MIDI no deben crashear la app
@@ -141,7 +167,7 @@ class MidiController {
 
   /// Libera un pad gate/hold al recibir Note Off o Note On con velocity 0.
   /// Los pads loop/toggle ignoran el Note Off (se detienen con el siguiente Note On).
-  Future<void> _handleMidiNoteOff(int noteOrCc) async {
+  Future<void> _handleMidiNoteOff(int noteOrCc, int status) async {
     try {
       var isLearning = ref.read(midiLearnModeProvider);
       if (isLearning) return;
@@ -152,6 +178,11 @@ class MidiController {
           .findAll();
       for (var mapping in mappings) {
         if (mapping.actionType != MidiActionType.triggerPad.name) continue;
+        // Solo aplicar Note Off a mapeos que sean notas (status 0x80..0x9F o comodin 0)
+        if (mapping.statusByte != 0 &&
+            (mapping.statusByte < 128 || mapping.statusByte > 159)) {
+          continue;
+        }
         var padId = mapping.actionValue;
         var pageIndex = ref.read(currentPageIndexProvider);
         var pads = ref.read(padPageProvider(pageIndex)).value ?? [];
@@ -196,7 +227,7 @@ class MidiController {
     invalidateFeedbackCache();
   }
 
-  Future<void> _executeMapping(int noteOrCc, int value) async {
+  Future<void> _executeMapping(int noteOrCc, int status, int value) async {
     var isar = await ref.read(isarProvider.future);
     var mappings = await isar.midiMappingModels
         .where()
@@ -204,6 +235,14 @@ class MidiController {
         .findAll();
 
     for (var mapping in mappings) {
+      // Discriminación por tipo de mensaje (Note On vs Control Change):
+      // Si el mapeo tiene statusByte guardado, el nibble superior (tipo de evento)
+      // debe coincidir con el mensaje entrante (ej. 0x90 para notas, 0xB0 para CC).
+      if (mapping.statusByte != 0) {
+        final mappingType = mapping.statusByte & 0xF0;
+        final incomingType = status & 0xF0;
+        if (mappingType != incomingType) continue;
+      }
       if (mapping.actionType == MidiActionType.triggerPad.name) {
         // Trigger Pad with Velocity Sensitivity
         var padId = mapping.actionValue;
@@ -314,15 +353,24 @@ class MidiController {
         .toList();
 
     String jsonString = jsonEncode(jsonList);
+    final bytes = utf8.encode(jsonString);
+
     String? outputFile = await FilePicker.saveFile(
       dialogTitle: 'Exportar Perfil MIDI',
       fileName: 'mi_perfil.midimap',
       type: FileType.custom,
       allowedExtensions: ['midimap'],
+      bytes: Platform.isAndroid ? Uint8List.fromList(bytes) : null,
     );
 
     if (outputFile != null) {
-      await File(outputFile).writeAsString(jsonString);
+      if (!Platform.isAndroid) {
+        final finalOutput = outputFile.toLowerCase().endsWith('.midimap')
+            ? outputFile
+            : '$outputFile.midimap';
+        await File(finalOutput).writeAsString(jsonString);
+        return finalOutput;
+      }
       return outputFile;
     }
     return null;
@@ -332,26 +380,36 @@ class MidiController {
     FilePickerResult? result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['midimap'],
+      withData: true,
     );
 
-    if (result != null && result.files.single.path != null) {
-      String jsonString = await File(result.files.single.path!).readAsString();
-      List<dynamic> jsonList = jsonDecode(jsonString);
+    if (result != null && result.files.isNotEmpty) {
+      final file = result.files.single;
+      String? jsonString;
+      if (file.bytes != null && file.bytes!.isNotEmpty) {
+        jsonString = utf8.decode(file.bytes!);
+      } else if (file.path != null && file.path!.isNotEmpty) {
+        jsonString = await File(file.path!).readAsString();
+      }
 
-      var isar = await ref.read(isarProvider.future);
-      await isar.writeTxn(() async {
-        await isar.midiMappingModels.clear(); // Limpiar el perfil anterior
-        invalidateFeedbackCache();
-        for (var item in jsonList) {
-          var model = MidiMappingModel()
-            ..noteOrCC = item['noteOrCC']
-            ..statusByte = item['statusByte']
-            ..actionType = item['actionType']
-            ..actionValue = item['actionValue'];
-          await isar.midiMappingModels.put(model);
-        }
-      });
-      return true;
+      if (jsonString != null) {
+        List<dynamic> jsonList = jsonDecode(jsonString);
+
+        var isar = await ref.read(isarProvider.future);
+        await isar.writeTxn(() async {
+          await isar.midiMappingModels.clear(); // Limpiar el perfil anterior
+          invalidateFeedbackCache();
+          for (var item in jsonList) {
+            var model = MidiMappingModel()
+              ..noteOrCC = item['noteOrCC']
+              ..statusByte = item['statusByte']
+              ..actionType = item['actionType']
+              ..actionValue = item['actionValue'];
+            await isar.midiMappingModels.put(model);
+          }
+        });
+        return true;
+      }
     }
     return false;
   }

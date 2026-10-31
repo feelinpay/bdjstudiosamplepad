@@ -135,5 +135,27 @@ void main() {
       ).existsSync(),
       isTrue,
     );
+
+    // Los archivos ORIGINALES del usuario NUNCA deben haberse movido ni borrado.
+    expect(
+      File(p.join(src.path, 'raiz.wav')).existsSync(),
+      isTrue,
+      reason: 'El archivo original en la carpeta del usuario no debe ser eliminado ni movido',
+    );
+    expect(
+      File(p.join(src.path, 'Carpeta1', 'audio_uno.mp3')).existsSync(),
+      isTrue,
+      reason: 'El archivo original en la carpeta del usuario debe permanecer intacto',
+    );
+    expect(
+      File(p.join(src.path, 'Carpeta1', 'SubCarpeta', 'audio_dos.flac')).existsSync(),
+      isTrue,
+      reason: 'El archivo original en subcarpeta debe permanecer intacto',
+    );
+    expect(
+      File(p.join(src.path, 'Carpeta2', 'otro.wav')).existsSync(),
+      isTrue,
+      reason: 'El archivo original en Carpeta2 debe permanecer intacto',
+    );
   });
 }

@@ -221,11 +221,7 @@ class WorkspaceImporter {
         final ext = p.extension(entity.path).toLowerCase();
         if (LocalAudioStorageService.supportedAudioExtensions.contains(ext)) {
           final dest = p.join(target.path, name);
-          try {
-            await entity.rename(dest);
-          } catch (_) {
-            await entity.copy(dest);
-          }
+          await entity.copy(dest);
         }
       }
     }

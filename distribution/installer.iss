@@ -1,4 +1,4 @@
-; BDJ Studio Sample Pad - Instalador Windows (Inno Setup 6)
+﻿; BDJ Studio Sample Pad - Instalador Windows (Inno Setup 6)
 ; Estructura basada en bdj_studio_license_setup.iss
 
 #define MyAppName "BDJ Studio Sample Pad"
@@ -6,7 +6,7 @@
 ; pubspec.yaml:  ISCC /DMyAppVersion=1.0.4 installer.iss
 ; El valor de abajo es solo el respaldo cuando se compila a mano.
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.3"
+  #define MyAppVersion "1.0.4"
 #endif
 #define MyAppPublisher "BDJ Studio"
 #define MyAppExeName "sample_pad_pro.exe"
@@ -32,6 +32,15 @@ OutputBaseFilename=BDJ_Studio_Sample_Pad_Setup_{#MyAppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed=x64compatible
+MinVersion=10.0
+UninstallDisplayName={#MyAppName}
+VersionInfoVersion={#MyAppVersion}
+VersionInfoProductName={#MyAppName}
+VersionInfoCompany={#MyAppPublisher}
+; Si la app está abierta, Restart Manager la cierra antes de reemplazar archivos.
+CloseApplications=force
+RestartApplications=no
 
 [Languages]
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
@@ -67,6 +76,62 @@ Type: filesandordirs; Name: "{localappdata}\BDJ Studio\BDJ Studio Sample Pad"
 Type: filesandordirs; Name: "{localappdata}\BDJ Studio\bdj_studio_sample_pad"
 
 [Code]
+// ---------------------------------------------------------------------------
+// App en ejecución: con la app abierta, Isar y el almacén cifrado quedan
+// bloqueados y la desinstalación no puede borrar los datos (motivo por el
+// que la licencia y los pads sobrevivían). Se detecta y se cierra antes.
+// ---------------------------------------------------------------------------
+function IsAppRunning(): Boolean;
+var
+  Locator, Service, Procs: Variant;
+begin
+  Result := False;
+  try
+    Locator := CreateOleObject('WbemScripting.SWbemLocator');
+    Service := Locator.ConnectServer('.', 'root\CIMV2');
+    Procs := Service.ExecQuery(
+      'SELECT ProcessId FROM Win32_Process WHERE Name = ''{#MyAppExeName}''');
+    Result := Procs.Count > 0;
+  except
+    Result := False;
+  end;
+end;
+
+procedure KillApp();
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM {#MyAppExeName}', '',
+    SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(800); // margen para que Windows libere los handles de archivo
+end;
+
+// Devuelve False si el usuario cancela.
+function EnsureAppClosed(Silent: Boolean): Boolean;
+begin
+  Result := True;
+  if not IsAppRunning() then
+    Exit;
+  if (not Silent) and (MsgBox(
+      '{#MyAppName} está abierto y debe cerrarse para continuar.' + #13#10 +
+      '¿Cerrarlo ahora?', mbConfirmation, MB_OKCANCEL) <> IDOK) then
+  begin
+    Result := False;
+    Exit;
+  end;
+  KillApp();
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  Result := EnsureAppClosed(WizardSilent());
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  Result := EnsureAppClosed(UninstallSilent());
+end;
+
 // Eliminación forzada y recursiva de todos los datos en AppData al desinstalar.
 // [UninstallDelete] solo borra carpetas si ya están vacías; DelTree borra
 // recursivamente todo el árbol de archivos (Isar DB, samples, prefs, licencias).

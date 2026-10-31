@@ -275,24 +275,42 @@ class ProjectExporter {
         .toIso8601String()
         .substring(0, 10)
         .replaceAll('-', '');
+
+    final tempExportPath = await exportProject(onProgress: onProgress);
+    if (tempExportPath == null) return null;
+    final tempFile = File(tempExportPath);
+
+    Uint8List? exportBytes;
+    if (Platform.isAndroid) {
+      exportBytes = await tempFile.readAsBytes();
+    }
+
     final output = await FilePicker.saveFile(
       dialogTitle: 'Exportar proyecto completo',
       fileName: 'BDJ_Studio_Project_$timestamp.sppproject',
       type: FileType.custom,
       allowedExtensions: const ['sppproject', 'sppbackup'],
+      bytes: exportBytes,
     );
-    if (output == null) return null;
+    if (output == null) {
+      try {
+        await tempFile.delete();
+        final parentDir = tempFile.parent;
+        if (await parentDir.exists()) {
+          await parentDir.delete(recursive: true);
+        }
+      } catch (_) {}
+      return null;
+    }
 
-    final finalOutput = (output.toLowerCase().endsWith('.sppproject') ||
-            output.toLowerCase().endsWith('.sppbackup'))
-        ? output
-        : '$output.sppproject';
+    if (!Platform.isAndroid) {
+      final finalOutput = (output.toLowerCase().endsWith('.sppproject') ||
+              output.toLowerCase().endsWith('.sppbackup'))
+          ? output
+          : '$output.sppproject';
+      await tempFile.copy(finalOutput);
+    }
 
-    final tempExportPath = await exportProject(onProgress: onProgress);
-    if (tempExportPath == null) return null;
-
-    final tempFile = File(tempExportPath);
-    await tempFile.copy(finalOutput);
     try {
       await tempFile.delete();
       final parentDir = tempFile.parent;
@@ -301,6 +319,6 @@ class ProjectExporter {
       }
     } catch (_) {}
 
-    return finalOutput;
+    return output;
   }
 }

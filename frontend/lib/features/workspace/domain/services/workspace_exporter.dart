@@ -166,26 +166,43 @@ class WorkspaceExporter {
         .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
         .replaceAll(' ', '_');
 
-    final output = await FilePicker.saveFile(
-      dialogTitle: 'Exportar workspace',
-      fileName: '$sanitizedName.sppworkspace',
-      type: FileType.custom,
-      allowedExtensions: const ['sppworkspace'],
-    );
-    if (output == null) return null;
-
-    final finalOutput = output.toLowerCase().endsWith('.sppworkspace')
-        ? output
-        : '$output.sppworkspace';
-
     final tempExportPath = await exportWorkspace(
       workspaceId,
       onProgress: onProgress,
     );
     if (tempExportPath == null) return null;
-
     final tempFile = File(tempExportPath);
-    await tempFile.copy(finalOutput);
+
+    Uint8List? exportBytes;
+    if (Platform.isAndroid) {
+      exportBytes = await tempFile.readAsBytes();
+    }
+
+    final output = await FilePicker.saveFile(
+      dialogTitle: 'Exportar workspace',
+      fileName: '$sanitizedName.sppworkspace',
+      type: FileType.custom,
+      allowedExtensions: const ['sppworkspace'],
+      bytes: exportBytes,
+    );
+    if (output == null) {
+      try {
+        await tempFile.delete();
+        final parentDir = tempFile.parent;
+        if (await parentDir.exists()) {
+          await parentDir.delete(recursive: true);
+        }
+      } catch (_) {}
+      return null;
+    }
+
+    if (!Platform.isAndroid) {
+      final finalOutput = output.toLowerCase().endsWith('.sppworkspace')
+          ? output
+          : '$output.sppworkspace';
+      await tempFile.copy(finalOutput);
+    }
+
     try {
       await tempFile.delete();
       final parentDir = tempFile.parent;
@@ -194,6 +211,6 @@ class WorkspaceExporter {
       }
     } catch (_) {}
 
-    return finalOutput;
+    return output;
   }
 }

@@ -173,23 +173,37 @@ class FolderTransferService {
         '${work.path}/metadata.json',
       ).writeAsString(jsonEncode(metadata));
 
-      var output = await FilePicker.saveFile(
-        dialogTitle: 'Exportar carpeta',
-        fileName: '${name.replaceAll(' ', '_')}.sppfolder',
-        type: FileType.custom,
-        allowedExtensions: ['sppfolder'],
-      );
-      if (output == null) return null;
-
+      final tempZip = '${work.path}/export.sppfolder';
       // Comprimir en un isolate para no bloquear la UI.
       await compute(
         zipDirectoryInIsolate,
         ZipHelperArgs(
           metadataPath: '${work.path}/metadata.json',
           mediaDirPath: mediaDir.path,
-          outputPath: output,
+          outputPath: tempZip,
         ),
       );
+
+      Uint8List? exportBytes;
+      if (Platform.isAndroid) {
+        exportBytes = await File(tempZip).readAsBytes();
+      }
+
+      var output = await FilePicker.saveFile(
+        dialogTitle: 'Exportar carpeta',
+        fileName: '${name.replaceAll(' ', '_')}.sppfolder',
+        type: FileType.custom,
+        allowedExtensions: ['sppfolder'],
+        bytes: exportBytes,
+      );
+      if (output == null) return null;
+
+      if (!Platform.isAndroid) {
+        final finalOutput = output.toLowerCase().endsWith('.sppfolder')
+            ? output
+            : '$output.sppfolder';
+        await File(tempZip).copy(finalOutput);
+      }
       return output;
     } finally {
       // Limpiar el directorio temporal de trabajo (metadata + audios copiados)

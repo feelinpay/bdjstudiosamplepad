@@ -26,7 +26,15 @@ Future<void> zipDirectoryInIsolate(ZipHelperArgs args) async {
   encoder.create(args.outputPath);
   await encoder.addFile(File(args.metadataPath));
   var mediaDir = Directory(args.mediaDirPath);
-  if (!await mediaDir.list().isEmpty) await encoder.addDirectory(mediaDir);
+  if (await mediaDir.exists() && !await mediaDir.list().isEmpty) {
+    final files = mediaDir.listSync(recursive: true);
+    for (final entity in files) {
+      if (entity is File) {
+        final rel = p.relative(entity.path, from: mediaDir.path).replaceAll(r'\', '/');
+        await encoder.addFile(entity, 'media/' + rel);
+      }
+    }
+  }
   await encoder.close();
 }
 
@@ -47,6 +55,9 @@ Future<void> extractZipInIsolate(ExtractZipArgs args) async {
   final inputStream = InputFileStream(args.zipPath);
   try {
     final archive = ZipDecoder().decodeStream(inputStream);
+    for (final file in archive.files) {
+      file.name = file.name.replaceAll(r'\', '/');
+    }
     await extractArchiveToDisk(archive, args.targetDir);
   } finally {
     await inputStream.close();

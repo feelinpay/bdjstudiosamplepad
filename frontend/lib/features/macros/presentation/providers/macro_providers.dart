@@ -82,15 +82,23 @@ class MacroListNotifier extends StateNotifier<AsyncValue<List<MacroEntity>>> {
     var jsonList = macros.map((m) => m.toJson()).toList();
     var jsonString = const JsonEncoder.withIndent('  ').convert(jsonList);
 
+    final bytes = utf8.encode(jsonString);
     var outputPath = await FilePicker.saveFile(
       dialogTitle: 'Exportar Macros',
       fileName: 'mis_macros.bdjmacro',
       type: FileType.custom,
       allowedExtensions: ['bdjmacro'],
+      bytes: Platform.isAndroid ? Uint8List.fromList(bytes) : null,
     );
 
     if (outputPath != null) {
-      await File(outputPath).writeAsString(jsonString);
+      if (!Platform.isAndroid) {
+        final finalOutput = outputPath.toLowerCase().endsWith('.bdjmacro')
+            ? outputPath
+            : '$outputPath.bdjmacro';
+        await File(finalOutput).writeAsString(jsonString);
+        return finalOutput;
+      }
       return outputPath;
     }
     return null;
@@ -100,10 +108,18 @@ class MacroListNotifier extends StateNotifier<AsyncValue<List<MacroEntity>>> {
     var result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['bdjmacro'],
+      withData: true,
     );
 
-    if (result != null && result.files.single.path != null) {
-      var jsonString = await File(result.files.single.path!).readAsString();
+    if (result != null && result.files.isNotEmpty) {
+      final file = result.files.single;
+      String? jsonString;
+      if (file.bytes != null && file.bytes!.isNotEmpty) {
+        jsonString = utf8.decode(file.bytes!);
+      } else if (file.path != null && file.path!.isNotEmpty) {
+        jsonString = await File(file.path!).readAsString();
+      }
+      if (jsonString != null) {
       final List<dynamic> jsonList;
       try {
         jsonList = jsonDecode(jsonString) as List;
@@ -129,6 +145,7 @@ class MacroListNotifier extends StateNotifier<AsyncValue<List<MacroEntity>>> {
 
       await load();
       return count;
+      }
     }
     return 0;
   }
