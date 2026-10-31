@@ -27,8 +27,7 @@ Future<void> zipDirectoryInIsolate(ZipHelperArgs args) async {
   await encoder.addFile(File(args.metadataPath));
   var mediaDir = Directory(args.mediaDirPath);
   if (await mediaDir.exists() && !await mediaDir.list().isEmpty) {
-    final files = mediaDir.listSync(recursive: true);
-    for (final entity in files) {
+    await for (final entity in mediaDir.list(recursive: true)) {
       if (entity is File) {
         final rel = p.relative(entity.path, from: mediaDir.path).replaceAll(r'\', '/');
         await encoder.addFile(entity, 'media/' + rel);

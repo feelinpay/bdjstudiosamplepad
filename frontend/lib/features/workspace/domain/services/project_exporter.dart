@@ -230,7 +230,7 @@ class ProjectExporter {
     }
 
     // 6. Versión dinámica de la aplicación obtenida del runtime
-    String appVersion = '1.0.3';
+    String appVersion = '1.0.5';
     try {
       final pkg = await PackageInfo.fromPlatform();
       appVersion = '${pkg.version}+${pkg.buildNumber}';

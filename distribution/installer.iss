@@ -1,12 +1,12 @@
-﻿; BDJ Studio Sample Pad - Instalador Windows (Inno Setup 6)
+; BDJ Studio Sample Pad - Instalador Windows (Inno Setup 6)
 ; Estructura basada en bdj_studio_license_setup.iss
 
 #define MyAppName "BDJ Studio Sample Pad"
 ; La version puede inyectarse desde fuera para que no se desincronice de
-; pubspec.yaml:  ISCC /DMyAppVersion=1.0.4 installer.iss
+; pubspec.yaml:  ISCC /DMyAppVersion=1.0.5 installer.iss
 ; El valor de abajo es solo el respaldo cuando se compila a mano.
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.4"
+  #define MyAppVersion "1.0.5"
 #endif
 #define MyAppPublisher "BDJ Studio"
 #define MyAppExeName "sample_pad_pro.exe"
