@@ -191,6 +191,23 @@ class CrashLogService {
     log('STACK: $topLines');
   }
 
+  /// Corrige el nombre comercial reportado por Windows cuando el kernel NT 10.0
+  /// corresponde a Windows 11 (Build >= 22000).
+  @visibleForTesting
+  static String formatOperatingSystemVersion(String os, String rawVersion) {
+    if (os.toLowerCase() == 'windows' && rawVersion.contains('Windows 10')) {
+      final match = RegExp(r'\(Build\s+(\d+)\)', caseSensitive: false)
+          .firstMatch(rawVersion);
+      if (match != null) {
+        final buildNumber = int.tryParse(match.group(1) ?? '');
+        if (buildNumber != null && buildNumber >= 22000) {
+          return rawVersion.replaceFirst('Windows 10', 'Windows 11');
+        }
+      }
+    }
+    return rawVersion;
+  }
+
   /// Genera un reporte técnico completo listo para copiar o enviar por WhatsApp.
   static Future<String> generateDiagnosticReport() async {
     final buffer = StringBuffer();
@@ -201,10 +218,14 @@ class CrashLogService {
       final pkg = await PackageInfo.fromPlatform();
       buffer.writeln('Versión App: ${pkg.version}+${pkg.buildNumber}');
     } catch (_) {
-      buffer.writeln('Versión App: 1.0.3');
+      buffer.writeln('Versión App: 1.0.5');
     }
 
-    buffer.writeln('Sistema: ${Platform.operatingSystem} ${Platform.operatingSystemVersion}');
+    final formattedOsVersion = formatOperatingSystemVersion(
+      Platform.operatingSystem,
+      Platform.operatingSystemVersion,
+    );
+    buffer.writeln('Sistema: ${Platform.operatingSystem} $formattedOsVersion');
     buffer.writeln('DeviceTier: ${DeviceTierDetector.current.name}');
     buffer.writeln('Perfil de rendimiento: ${DeviceTierDetector.profile.summary}');
     final signals = DeviceTierDetector.signals;

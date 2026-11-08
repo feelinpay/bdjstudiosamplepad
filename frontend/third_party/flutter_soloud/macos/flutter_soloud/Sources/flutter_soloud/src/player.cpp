@@ -300,6 +300,11 @@ PlayerErrors Player::changeDevice(int deviceID)
     void *restore_id = mCurrentDeviceWasDefault ? nullptr : (void *)&mCurrentDeviceId;
     int restoreResult = (int)soloud.miniaudio_changeDevice(restore_id);
 
+    if (result == MA_BUSY || result == MA_ALREADY_IN_USE)
+    {
+        return deviceBusy;
+    }
+
     if (restoreResult == 0)
     {
         return deviceChangeFailedRestored;

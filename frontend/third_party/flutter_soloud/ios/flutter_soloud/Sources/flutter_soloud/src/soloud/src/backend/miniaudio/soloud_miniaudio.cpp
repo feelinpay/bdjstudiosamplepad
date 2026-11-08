@@ -806,6 +806,8 @@ namespace SoLoud
             return startResult;
         }
 
+        gDeviceInitDeferred = false;
+        gDeviceStartDeferred = false;
         return MA_SUCCESS;
     }
 
@@ -819,24 +821,22 @@ namespace SoLoud
             return UNKNOWN_ERROR;
 #endif
 
-        // Stop the device before uninitializing to ensure clean shutdown
-        if (ma_device_get_state(&gDevice) == ma_device_state_started)
+        std::lock_guard<std::mutex> lock(gInitMutex);
+
+        // Stop and uninitialize the old device without holding soloud's audio
+        // mutex: the audio callback thread acquires that mutex inside mix(),
+        // and ma_device_stop / ma_device_uninit wait for the callback thread
+        // to exit, which would risk an AB-BA deadlock if the audio mutex were held.
+        if (gDeviceInitialized && ma_device_get_state(&gDevice) == ma_device_state_started)
         {
             ma_device_stop(&gDevice);
         }
-
-        // Lock the audio mutex to prevent race conditions during device change
-        soloud->lockAudioMutex_internal();
 
         bool hadOldDevice = gDeviceInitialized;
         ma_device_id oldDeviceId;
         if (hadOldDevice)
         {
             memcpy(&oldDeviceId, &gDevice.playback.id, sizeof(ma_device_id));
-        }
-
-        if (gDeviceInitialized)
-        {
             ma_device_uninit(&gDevice);
             gDeviceInitialized = false;
         }
@@ -856,11 +856,9 @@ namespace SoLoud
                 init_and_start_device(NULL);
             }
 
-            soloud->unlockAudioMutex_internal();
             return (result)targetResult;
         }
 
-        soloud->unlockAudioMutex_internal();
         return 0; // SO_NO_ERROR
     }
 };

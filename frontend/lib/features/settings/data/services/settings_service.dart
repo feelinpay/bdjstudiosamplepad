@@ -5,6 +5,7 @@ import '../../../../core/platform/device_tier.dart';
 class SettingsService {
   static const _keyAudioOutputDeviceId = 'audio_output_device_id';
   static const _keyAudioOutputDeviceName = 'audio_output_device_name';
+  static const _keyAudioRoutingMigratedV105 = 'audio_routing_migrated_v105';
   static const _keySoundCacheCapacity = 'sound_cache_capacity';
   late SharedPreferences _prefs;
 
@@ -62,6 +63,17 @@ class SettingsService {
     } else {
       await _prefs.setInt(_keyAudioOutputDeviceId, value);
     }
+  }
+
+  /// Limpia por única vez las preferencias de salida de audio heredadas de <= 1.0.4
+  /// (donde el desfase de índice 0 podía dejar fijados los altavoces internos al
+  /// conectar una controladora). Permite actualizar encima de 1.0.4 sin desinstalar
+  /// y arrancar directamente con la detección automática del sistema operativo.
+  Future<void> migrateAudioRoutingV105() async {
+    if (_prefs.getBool(_keyAudioRoutingMigratedV105) == true) return;
+    await _prefs.remove(_keyAudioOutputDeviceId);
+    await _prefs.remove(_keyAudioOutputDeviceName);
+    await _prefs.setBool(_keyAudioRoutingMigratedV105, true);
   }
 
   /// Migración automática de índice de dispositivo heredado a nombre persistente.

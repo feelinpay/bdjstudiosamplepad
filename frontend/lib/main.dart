@@ -39,6 +39,7 @@ import 'core/security/device_fingerprint.dart';
 import 'core/services/crash_log_service.dart';
 import 'core/security/keychain_ci_smoke.dart';
 import 'core/audio/audio_bootstrapper.dart';
+import 'core/audio/audio_initialization_result.dart';
 import 'core/diagnostics/startup_timeline.dart';
 
 void main() {
@@ -253,6 +254,7 @@ class _BootstrapAppState extends State<_BootstrapApp> {
     // ── Fase 3: Motor de audio ───────────────────────────────────────────
     final audioEngine = SoLoudAudioEngine();
     final settingsService = SettingsService.withPrefs(prefs);
+    await settingsService.migrateAudioRoutingV105();
     audioEngine.setSoundCacheCapacity(settingsService.soundCacheCapacity);
 
     // ── Fase 4: Configuración de plataforma ──────────────────────────────
@@ -565,6 +567,18 @@ class _SamplePadProAppState extends ConsumerState<SamplePadProApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       ref.read(licenseProvider.notifier).sync();
+      _engine.refreshPlaybackDevices().then((devices) {
+        if (!mounted || devices.isEmpty) return;
+        final current = ref.read(audioInitializationCacheProvider);
+        ref.read(audioInitializationCacheProvider.notifier).state =
+            AudioInitializationResult(
+              state: _engine.engineState,
+              devices: devices,
+              appliedDeviceId: _engine.activeDeviceId ?? current?.appliedDeviceId,
+              savedDeviceInvalid: current?.savedDeviceInvalid ?? false,
+              userMessage: current?.userMessage,
+            );
+      }).catchError((_) {});
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
       unawaited(CrashLogService.flush());

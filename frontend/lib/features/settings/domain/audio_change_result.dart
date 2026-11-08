@@ -3,27 +3,32 @@
 /// estado sin dispositivo, sin exponer excepciones C++ al usuario.
 class AudioChangeResult {
   final String userMessage;
+  final bool isSuccess;
   final bool isRecoverable;
   final bool isNoDevice;
 
   const AudioChangeResult({
     this.userMessage = '',
+    this.isSuccess = false,
     this.isRecoverable = false,
     this.isNoDevice = false,
   });
 
   const AudioChangeResult.success(String message)
       : userMessage = message,
+        isSuccess = true,
         isRecoverable = true,
         isNoDevice = false;
 
   const AudioChangeResult.failure(String message)
       : userMessage = message,
+        isSuccess = false,
         isRecoverable = true,
         isNoDevice = false;
 
   const AudioChangeResult.noDevice(String message)
       : userMessage = message,
+        isSuccess = false,
         isRecoverable = true,
         isNoDevice = true;
 }

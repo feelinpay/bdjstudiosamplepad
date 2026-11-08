@@ -291,6 +291,10 @@ interface class SoLoud {
   /// Signals the native engine to abandon the in-flight initialization.
   void abandonInitEngine() => _controller.soLoudFFI.abandonInitEngine();
 
+  /// Stream of native audio device state notifications (started, stopped, rerouted, etc.).
+  Stream<PlayerStateNotification> get stateChangedEvents =>
+      _controller.soLoudFFI.stateChangedEvents;
+
   /// Backing of [activeSounds].
   final List<AudioSource> _activeSounds = [];
 

@@ -47,10 +47,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   void _checkAudioState() {
     final engine = ref.read(audioEngineProvider);
-    if (engine.engineState == AudioEngineState.ready &&
-        _audioChangeResult != null &&
-        mounted) {
-      setState(() => _audioChangeResult = null);
+    final initCache = ref.read(audioInitializationCacheProvider);
+    if (!mounted) return;
+    if (engine.engineState == AudioEngineState.ready) {
+      if (initCache != null &&
+          initCache.savedDeviceInvalid &&
+          initCache.userMessage != null &&
+          _audioChangeResult == null) {
+        setState(() {
+          _audioChangeResult = AudioChangeResult.failure(initCache.userMessage!);
+        });
+      } else if (_audioChangeResult != null && _audioChangeResult!.isNoDevice) {
+        setState(() => _audioChangeResult = null);
+      }
+      engine.refreshPlaybackDevices().then((devices) {
+        if (!mounted || devices.isEmpty) return;
+        final current = ref.read(audioInitializationCacheProvider);
+        ref.read(audioInitializationCacheProvider.notifier).state =
+            AudioInitializationResult(
+              state: engine.engineState,
+              devices: devices,
+              appliedDeviceId: engine.activeDeviceId ?? current?.appliedDeviceId,
+              savedDeviceInvalid: current?.savedDeviceInvalid ?? false,
+              userMessage: current?.userMessage,
+            );
+      }).catchError((_) {});
     }
   }
 
@@ -61,7 +82,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     if (engineState == AudioEngineState.ready &&
         _audioChangeResult != null &&
-        !_audioChangeResult!.isNoDevice) {
+        (_audioChangeResult!.isNoDevice || _audioChangeResult!.isSuccess)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           setState(() => _audioChangeResult = null);
@@ -347,9 +368,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget _buildAudioStatusSubtitle(AudioEngineState state) {
     switch (state) {
       case AudioEngineState.ready:
-        return const Text(
-          'Listo para reproducir',
-          style: TextStyle(fontSize: 11, color: Colors.greenAccent),
+        final initCache = ref.watch(audioInitializationCacheProvider);
+        final engine = ref.read(audioEngineProvider);
+        final activeId = engine.activeDeviceId ?? initCache?.appliedDeviceId;
+        final activeDevice = initCache?.devices
+                .where((d) => d.id == activeId)
+                .firstOrNull ??
+            initCache?.devices.where((d) => d.isDefault).firstOrNull;
+        final activeName = activeDevice?.name;
+        final label = (activeName != null && activeName.isNotEmpty)
+            ? 'Listo para reproducir • $activeName'
+            : 'Listo para reproducir';
+        return Text(
+          label,
+          style: const TextStyle(fontSize: 11, color: Colors.greenAccent),
         );
       case AudioEngineState.noDevice:
         return const Text(
@@ -407,15 +439,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final devices = await engine.listOutputDevices();
     if (!context.mounted) return;
 
-    int? selectedId = engine.activeDeviceId;
     final settings = ref.read(settingsServiceProvider);
-    if (selectedId == null) {
-      final savedName = settings.audioOutputDeviceName;
-      if (savedName != null && savedName.isNotEmpty) {
+    final savedName = settings.audioOutputDeviceName;
+    final savedId = settings.audioOutputDeviceId;
+    final hasExplicitSelection =
+        (savedName != null && savedName.isNotEmpty) ||
+        (savedId != null && savedId != -1);
+
+    int? selectedId;
+    if (hasExplicitSelection) {
+      selectedId = engine.activeDeviceId;
+      if (selectedId == null && savedName != null && savedName.isNotEmpty) {
         final match = devices.where((d) => d.name == savedName).firstOrNull;
         selectedId = match?.id;
       }
-      selectedId ??= settings.audioOutputDeviceId;
+      selectedId ??= savedId;
     }
 
     if (devices.isEmpty) {
@@ -449,12 +487,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (!context.mounted || selected == null) return;
 
     final deviceId = selected == -1 ? null : selected;
-    if (deviceId == selectedId) return;
 
     final result = await _safeChangeDevice(context, ref, engine, deviceId);
     if (result != null && context.mounted) {
-      setState(() => _audioChangeResult = result);
-      if (result.isRecoverable) {
+      setState(() => _audioChangeResult = result.isSuccess ? null : result);
+      if (!result.isSuccess && result.isRecoverable) {
         AppSnack.show(
           context,
           result.userMessage,
@@ -546,11 +583,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             children: [
               Icon(icon, color: color, size: 20),
               const SizedBox(width: 8),
-              Text(
-                result.userMessage,
-                style: TextStyle(
-                  color: color,
-                  fontWeight: FontWeight.w600,
+              Expanded(
+                child: Text(
+                  result.userMessage,
+                  style: TextStyle(
+                    color: color,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ],
@@ -603,14 +642,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     List<AudioOutputDevice> devices,
     int? selectedId,
   ) {
+    final defaultDev = devices.where((d) => d.isDefault).firstOrNull;
     return ListView(
       shrinkWrap: true,
       children: [
         RadioListTile<int>(
           value: -1,
           groupValue: selectedId ?? -1,
+          toggleable: true,
           title: const Text('Predeterminada del sistema'),
-          onChanged: (value) => Navigator.pop(context, value),
+          subtitle: defaultDev != null
+              ? Text('Automática (${defaultDev.name})')
+              : null,
+          onChanged: (_) => Navigator.pop(context, -1),
         ),
         ...devices.map(
           (device) => _audioDeviceTile(context, device, selectedId),
@@ -638,6 +682,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             );
           }
           if (engine.lastErrorMessage != null) {
+            final devices = await engine.listOutputDevices();
+            ref.read(audioInitializationCacheProvider.notifier).state =
+                AudioInitializationResult(
+                  state: engine.engineState,
+                  devices: devices,
+                  appliedDeviceId: engine.activeDeviceId,
+                );
             return AudioChangeResult.failure(
               engine.lastErrorMessage!,
             );
@@ -664,7 +715,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               AudioInitializationResult(
                 state: engine.engineState,
                 devices: devices,
-                appliedDeviceId: deviceId,
+                appliedDeviceId: engine.activeDeviceId ?? deviceId,
               );
           return const AudioChangeResult.success('Salida de audio actualizada.');
         } catch (error, st) {
@@ -764,10 +815,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   ) => RadioListTile<int>(
       value: device.id,
       groupValue: selectedId ?? -1,
+      toggleable: true,
       title: Text(device.name),
       subtitle:
           device.isDefault ? const Text('Predeterminada actual') : null,
-      onChanged: (value) => Navigator.pop(dialogContext, value),
+      onChanged: (_) => Navigator.pop(dialogContext, device.id),
     );
 
   Future<void> _selectPadSize(BuildContext context, WidgetRef ref) async {
