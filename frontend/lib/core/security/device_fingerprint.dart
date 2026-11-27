@@ -123,6 +123,11 @@ class DeviceFingerprint {
       // NO se debe tocar lo guardado para no perder la licencia del usuario.
       if (result.isFallback) return;
 
+      // En Windows, si ya existe una huella persistida, se conserva como inmutable
+      // para evitar que oscilaciones entre WMI y fallback MachineGuid invaliden
+      // la licencia activa del usuario.
+      if (Platform.isWindows) return;
+
       if (result.stabilitySignature != persisted.s) {
         _cachedFingerprint = result.visibleHwid;
         final writer = _writePersisted;
@@ -137,6 +142,41 @@ class DeviceFingerprint {
         onFingerprintChanged?.call();
       }
     } catch (_) {}
+  }
+
+  /// Permite fijar y persistir un HWID verificado (p.ej. restaurado desde una
+  /// activación previa válida almacenada en el almacén seguro).
+  Future<void> persistFixedHwid(String hwid, {String? stabilitySignature}) async {
+    _cachedFingerprint = hwid;
+    final writer = _writePersisted;
+    if (writer != null) {
+      try {
+        await writer(
+          jsonEncode(<String, String>{
+            'f': hwid,
+            's': stabilitySignature ?? '',
+          }),
+        );
+      } catch (_) {}
+    }
+  }
+
+  /// Retorna el HWID alternativo de Windows (MachineGuid) si estamos en Windows,
+  /// útil para tolerar licencias emitidas bajo el fallback de reserva.
+  Future<String?> getWindowsFallbackHwid() async {
+    if (!Platform.isWindows) return null;
+    try {
+      final windows = await _deviceInfo.windowsInfo;
+      final hwid = HwidEngine.canonicalize(
+        platform: 'windows',
+        components: {
+          'deviceId': windows.deviceId,
+        },
+      );
+      return hwid.visibleHwid;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<String> generate() async {
@@ -161,6 +201,11 @@ class DeviceFingerprint {
     if (_readPersisted == null || writer == null) return result.visibleHwid;
     final persisted = await _readPersistedRecord();
     if (persisted != null) {
+      // En Windows, si ya se tiene una huella guardada, se respeta para
+      // mantener la inmutabilidad de la licencia activa del usuario.
+      if (Platform.isWindows && persisted.f.isNotEmpty) {
+        return persisted.f;
+      }
       if (persisted.s == result.stabilitySignature || result.isFallback) {
         return persisted.f;
       }

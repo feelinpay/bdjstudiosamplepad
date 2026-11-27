@@ -1621,9 +1621,18 @@ class PadPageNotifier extends AsyncNotifier<List<PadEntity>> {
         var audioEngine = ref.read(audioEngineProvider);
         if (!audioEngine.isLoaded(id)) {
           AudioLog.log('[Pad] onPadDown: NOT LOADED, loading id=$id path=${pad.sampleId}');
-          await audioEngine.loadAudio(id, pad.sampleId!);
+          await audioEngine.loadAudio(
+            id,
+            pad.sampleId!,
+            needsRandomAccess: pad.needsRandomAccess,
+          );
         } else {
           AudioLog.log('[Pad] onPadDown: already loaded id=$id');
+        }
+
+        if (!audioEngine.isLoaded(id)) {
+          AudioLog.log('[Pad] onPadDown: FAILED TO LOAD id=$id path=${pad.sampleId}');
+          return;
         }
 
         if (pad.playMode == TriggerMode.oneShot &&

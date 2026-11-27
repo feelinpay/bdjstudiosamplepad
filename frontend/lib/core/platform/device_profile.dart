@@ -149,14 +149,20 @@ DeviceProfile resolveProfile(DeviceSignals s, PerformanceOverride o) {
       budgetMb = maxAllowedFromAvail;
     }
   }
-  // Mínimo de seguridad para que la app pueda operar al menos con un set básico
-  if (budgetMb < 32) budgetMb = 32;
+  // Mínimo de seguridad para que la app pueda operar con un set de pads completo
+  // sin desalojar sonidos prematuramente (crítico en tablets/móviles Android con 2-4 GB de RAM)
+  final minSafeBudget = switch (effectiveTier) {
+    DeviceTier.low => (refRam <= 2048) ? 96 : 128,
+    DeviceTier.mid => 256,
+    DeviceTier.high => 512,
+  };
+  if (budgetMb < minSafeBudget) budgetMb = minSafeBudget;
 
   // 4. Parámetros derivados del tier efectivo:
   final int maxConcurrentLoads = switch (effectiveTier) {
-    DeviceTier.low => 1,
-    DeviceTier.mid => 2,
-    DeviceTier.high => min(4, max(1, s.cores ~/ 2)),
+    DeviceTier.low => s.cores >= 4 ? 2 : 1,
+    DeviceTier.mid => min(3, max(2, s.cores ~/ 2)),
+    DeviceTier.high => min(4, max(2, s.cores ~/ 2)),
   };
 
   final int diskThresholdSeconds = switch (effectiveTier) {

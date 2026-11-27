@@ -92,8 +92,8 @@ class SoLoudAudioEngine implements AudioEnginePort {
 
   static int _calculateMaxConcurrentLoads() {
     return switch (DeviceTierDetector.current) {
-      DeviceTier.low => 1,
-      DeviceTier.mid => 2,
+      DeviceTier.low => Platform.numberOfProcessors >= 4 ? 2 : 1,
+      DeviceTier.mid => (Platform.numberOfProcessors ~/ 2).clamp(2, 3),
       DeviceTier.high => (Platform.numberOfProcessors ~/ 2).clamp(2, 4),
     };
   }
@@ -979,7 +979,7 @@ class SoLoudAudioEngine implements AudioEnginePort {
   }
 
   final Map<String, String> _loadedPaths = {};
-  final Set<String> _loadingIds = {};
+  final Map<String, Completer<void>> _loadingCompleters = {};
 
   void _deferDisposeSource(String id, AudioSource source) {
     final bytes = _sourceBytesExpando[source] ?? (256 * 1024);
@@ -1057,11 +1057,18 @@ class SoLoudAudioEngine implements AudioEnginePort {
     if (AudioLog.verbose) {
       final inCache = _cacheReady && _loadedSounds.containsKey(id);
       AudioLog.log(
-        '[SoLoud] loadAudio: id=$id path=$assetPath needsRandomAccess=$needsRandomAccess inCache=$inCache inFlight=${_loadingIds.contains(id)}',
+        '[SoLoud] loadAudio: id=$id path=$assetPath needsRandomAccess=$needsRandomAccess inCache=$inCache inFlight=${_loadingCompleters.containsKey(id)}',
       );
     }
-    if (_loadingIds.contains(id)) return;
-    _loadingIds.add(id);
+    // Si ya hay una carga en vuelo para este id (ej. precarga de la cola en segundo plano),
+    // esperamos a que termine para que onPadDown no intente reproducir un sonido inexistente.
+    final existingCompleter = _loadingCompleters[id];
+    if (existingCompleter != null) {
+      await existingCompleter.future;
+      return;
+    }
+    final completer = Completer<void>();
+    _loadingCompleters[id] = completer;
     try {
       await _loadAudioInternal(
         id,
@@ -1069,7 +1076,10 @@ class SoLoudAudioEngine implements AudioEnginePort {
         needsRandomAccess: needsRandomAccess,
       );
     } finally {
-      _loadingIds.remove(id);
+      _loadingCompleters.remove(id);
+      if (!completer.isCompleted) {
+        completer.complete();
+      }
     }
   }
 
@@ -1084,6 +1094,12 @@ class SoLoudAudioEngine implements AudioEnginePort {
       return;
     }
     var resolvedPath = LocalAudioStorageService.resolvePathSync(assetPath);
+    if (Platform.isAndroid &&
+        (resolvedPath.startsWith('content://') ||
+            resolvedPath.contains('%') ||
+            resolvedPath.contains(':'))) {
+      resolvedPath = await LocalAudioStorageService.resolveContentUriToPath(resolvedPath);
+    }
     AudioLog.log('[SoLoud] loadAudio: resolvedPath=$resolvedPath');
 
     if (_loadedSounds.containsKey(id) && _loadedPaths[id] == resolvedPath) {
@@ -1723,7 +1739,10 @@ class SoLoudAudioEngine implements AudioEnginePort {
     _disposalTimer?.cancel();
     _disposalTimer = null;
     _pendingDisposals.clear();
-    _loadingIds.clear();
+    for (var c in _loadingCompleters.values) {
+      if (!c.isCompleted) c.complete();
+    }
+    _loadingCompleters.clear();
     for (var timer in _fadeTimers.values) {
       timer.cancel();
     }

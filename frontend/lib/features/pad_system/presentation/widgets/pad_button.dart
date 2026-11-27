@@ -60,7 +60,15 @@ class PadButton extends ConsumerWidget {
           onPointerDown: (event) {
             try {
               if (isEditMode || ref.read(padMoveSourceProvider) != null) return;
-              if (event.buttons != kPrimaryButton) return;
+              // En pantallas táctiles de tablets/móviles Android, event.buttons puede
+              // ser 0 o kTouchContact en vez de kPrimaryButton (1). Aceptamos cualquier
+              // contacto táctil, lápiz óptico o clic primario del mouse.
+              final isPrimaryTouch = event.kind == PointerDeviceKind.touch ||
+                  event.kind == PointerDeviceKind.stylus ||
+                  event.kind == PointerDeviceKind.invertedStylus ||
+                  (event.buttons & kPrimaryButton) != 0 ||
+                  event.buttons == 0;
+              if (!isPrimaryTouch) return;
               HapticFeedback.lightImpact();
 
               // Carpeta: navegar de forma segura con SafeFolderNavigator y protección contra spam

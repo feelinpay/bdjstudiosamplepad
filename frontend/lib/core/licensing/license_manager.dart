@@ -156,7 +156,23 @@ class LicenseManager implements LicensingPort {
       );
     }
 
-    return _activateAndVerifySpp3(licenseKey, fingerprint, appVersion);
+    final verification = await _activateAndVerifySpp3(licenseKey, fingerprint, appVersion);
+    if (verification.isRight()) {
+      return verification;
+    }
+
+    // Si falló y estamos en Windows, verificar si coincide con el HWID alternativo (MachineGuid)
+    final winFallback = await _fingerprint.getWindowsFallbackHwid();
+    if (winFallback != null && winFallback != fingerprint) {
+      final fallbackVerification = await _activateAndVerifySpp3(licenseKey, winFallback, appVersion);
+      if (fallbackVerification.isRight()) {
+        _cachedFingerprint = winFallback;
+        await _fingerprint.persistFixedHwid(winFallback);
+        return fallbackVerification;
+      }
+    }
+
+    return verification;
   }
 
   @override
@@ -191,6 +207,32 @@ class LicenseManager implements LicensingPort {
       final appVersion = await _getAppVersion();
       final verification = await _activateAndVerifySpp3(storedKey, fingerprint, appVersion);
       if (verification.isLeft()) {
+        // Fallback defensivo 1: Verificar contra el deviceId con el que fue activada originalmente
+        final storedDeviceId = (await _secureStorage.readSecure(LicenseStorageKeys.deviceId)).getOrElse(() => null);
+        if (storedDeviceId != null && storedDeviceId.isNotEmpty && storedDeviceId != fingerprint) {
+          final fallbackVerification = await _activateAndVerifySpp3(storedKey, storedDeviceId, appVersion);
+          if (fallbackVerification.isRight()) {
+            _cachedFingerprint = storedDeviceId;
+            await _secureStorage.storeSecure(LicenseStorageKeys.hardwareFingerprint, storedDeviceId);
+            await _fingerprint.persistFixedHwid(storedDeviceId);
+            _currentStatus = LicenseStatus.active;
+            return fallbackVerification;
+          }
+        }
+
+        // Fallback defensivo 2: Si estamos en Windows, verificar contra el fallback HWID (MachineGuid)
+        final winFallback = await _fingerprint.getWindowsFallbackHwid();
+        if (winFallback != null && winFallback != fingerprint && winFallback != storedDeviceId) {
+          final winVerification = await _activateAndVerifySpp3(storedKey, winFallback, appVersion);
+          if (winVerification.isRight()) {
+            _cachedFingerprint = winFallback;
+            await _secureStorage.storeSecure(LicenseStorageKeys.hardwareFingerprint, winFallback);
+            await _fingerprint.persistFixedHwid(winFallback);
+            _currentStatus = LicenseStatus.active;
+            return winVerification;
+          }
+        }
+
         final failure = verification.fold((l) => l, (r) => throw StateError(''));
         if (!failure.isTransient) {
           _currentStatus = LicenseStatus.invalid;
